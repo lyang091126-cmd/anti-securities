@@ -69,11 +69,16 @@ C_ACCENT_SOFT = "#4B9FFF"
 C_WARN = "#FF9800"
 C_TEXT = "#D1D4DC"      # 正文（TradingView 文字灰白）
 C_TEXT_STRONG = "#F0F3FA"
-# V10 五·色彩重构：对齐 Bloomberg/Wind 深藏青枪灰质感
-C_BG_APP = "#0B1120"    # 全局背景（深藏青/枪灰，弃用死板全黑）
-C_BG_PANEL = "#0F172A"
-C_BG_CARD = "rgba(30, 41, 59, 0.7)"   # 卡片底（半透明，配合毛玻璃）
-C_BORDER = "rgba(255, 255, 255, 0.1)"  # 细微亮边
+# V12 Bloomberg Edition 色彩重构：对齐彭博终端/彭博社的高对比暗黑分层。
+# 关键变化：卡片底由半透明改为实色——半透明叠在深色背景上会让相邻模块
+# 边界糊成一片，失去"面板"的体块感，这正是原版显得松散的主因。
+C_BG_APP = "#0A0E17"    # 全局背景（深邃钛灰）
+C_BG_PANEL = "#0E1420"
+C_BG_CARD = "#121824"   # 卡片面板（实色，建立清晰体块边界）
+C_BG_CARD_HI = "#161D2B"  # 卡片悬停/次级层
+C_BORDER = "rgba(255, 255, 255, 0.08)"  # 超细边框
+C_BB_ORANGE = "#FF5E00"   # 彭博标志性暖橙：重点聚焦区顶边 / 微型大写标签
+C_BB_ORANGE_DIM = "rgba(255, 94, 0, 0.14)"
 
 # ---------------------------------------------------------------------------
 # V10 五·涨跌语义切换：默认 A 股口径（红涨绿跌），可切国际口径（绿涨红跌）。
@@ -1062,6 +1067,126 @@ div[data-baseweb="tab-panel"] {{ padding-top: 0.6rem; }}
 }}
 .rate-relay-box strong {{ color: {C_ACCENT_SOFT}; }}
 
+/* =====================================================================
+   V12 Bloomberg Edition · 视觉基元
+   —— 排印规范：标题紧凑重字重、行情数字等宽、标签微型大写橙。
+      等宽字体是硬要求：比例字体下多行数字的小数点无法纵向对齐，
+      一列报价会呈锯齿状，这是终端类界面最典型的业余感来源。
+====================================================================== */
+.bb-header {{
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: {C_TEXT_STRONG};
+    font-family: 'Inter', 'Helvetica Neue', 'Segoe UI', sans-serif;
+    line-height: 1.2;
+}}
+/* 微型大写标签（栏目名 / 时间戳 / 数据源） */
+.bb-label {{
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: {C_BB_ORANGE};
+}}
+.bb-label-mute {{
+    font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: {C_NEUTRAL};
+}}
+.bb-card {{
+    background: {C_BG_CARD};
+    border: 1px solid {C_BORDER};
+    border-radius: 4px;
+    padding: 14px 16px;
+}}
+/* 重点聚焦区：顶部 2px 暖橙高亮线（彭博 Lead Story 质感） */
+.bb-card-lead {{ border-top: 2px solid {C_BB_ORANGE}; border-radius: 0 0 4px 4px; }}
+.bb-kpi-num {{
+    font-family: 'JetBrains Mono', 'Roboto Mono', 'Consolas', monospace;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: {C_TEXT_STRONG};
+    letter-spacing: -0.3px;
+}}
+.bb-badge-live {{
+    display: inline-flex; align-items: center; gap: 5px;
+    background: {C_BB_ORANGE_DIM};
+    border: 1px solid {C_BB_ORANGE};
+    color: {C_BB_ORANGE};
+    font-size: 0.64rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.6px; padding: 2px 8px; border-radius: 3px;
+    white-space: nowrap;
+}}
+.bb-badge-live::before {{
+    content: "●"; font-size: 0.7rem; line-height: 1;
+    animation: bb-pulse 1.8s ease-in-out infinite;
+}}
+@keyframes bb-pulse {{ 0%,100% {{ opacity: 1; }} 50% {{ opacity: 0.25; }} }}
+/* 快讯条目 */
+.bb-news-item {{
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 7px 0;
+    border-bottom: 1px solid {C_BORDER};
+    font-size: 0.84rem; line-height: 1.5; color: {C_TEXT};
+}}
+.bb-news-item:last-child {{ border-bottom: none; }}
+.bb-news-time {{
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 0.72rem; color: {C_BB_ORANGE}; font-weight: 700;
+    flex: 0 0 auto; white-space: nowrap;
+}}
+
+/* 实时快讯带（Live Ribbon） */
+.bb-ribbon {{
+    display: flex; align-items: stretch; gap: 0;
+    background: {C_BG_CARD};
+    border: 1px solid {C_BORDER};
+    border-left: 3px solid {C_BB_ORANGE};
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 6px 0 10px 0;
+}}
+.bb-ribbon-tag {{
+    display: flex; align-items: center; gap: 6px;
+    background: {C_BB_ORANGE_DIM};
+    padding: 8px 12px;
+    font-size: 0.66rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.6px; color: {C_BB_ORANGE}; white-space: nowrap;
+    border-right: 1px solid {C_BORDER};
+}}
+.bb-ribbon-body {{
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 22px;
+    padding: 8px 14px; min-width: 0; flex: 1 1 auto;
+}}
+.bb-ribbon-item {{ font-size: 0.8rem; color: {C_TEXT}; line-height: 1.5; }}
+.bb-ribbon-item .t {{
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    color: {C_BB_ORANGE}; font-weight: 700; font-size: 0.72rem; margin-right: 6px;
+}}
+
+/* 跨资产矩阵（Cross-Asset Heat Matrix） */
+.bb-matrix {{ width: 100%; border-collapse: collapse; font-size: 0.84rem; }}
+.bb-matrix thead th {{
+    font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: {C_NEUTRAL};
+    text-align: right; padding: 7px 12px;
+    border-bottom: 1px solid {C_BORDER}; white-space: nowrap;
+}}
+.bb-matrix thead th:first-child {{ text-align: left; }}
+.bb-matrix td {{
+    padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    text-align: right; white-space: nowrap;
+}}
+.bb-matrix td:first-child {{ text-align: left; }}
+.bb-matrix tr:last-child td {{ border-bottom: none; }}
+.bb-matrix tr:hover td {{ background: {C_BG_CARD_HI}; }}
+.bb-asset-name {{ font-weight: 700; color: {C_TEXT_STRONG}; }}
+.bb-asset-sub {{ font-size: 0.68rem; color: {C_NEUTRAL}; font-weight: 400; }}
+.bb-num {{
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums; font-weight: 700; color: {C_TEXT_STRONG};
+}}
+.bb-na {{ color: {C_NEUTRAL_DIM}; font-size: 0.76rem; font-style: italic; }}
+
 </style>
 """)
 
@@ -1384,12 +1509,26 @@ def build_scenario_chart(current_price, scenarios, price_label="", height=330):
 # ===========================================================================
 def apply_institutional_axes(fig):
     """V10 P10：机构级坐标轴基准线——所有柱状/折线图统一 X 轴边框与零线，
-    对齐 Bloomberg/Wind 的严谨观感。饼图/雷达图等无坐标轴图表不适用。"""
+    对齐 Bloomberg/Wind 的严谨观感。饼图/雷达图等无坐标轴图表不适用。
+
+    V12：图例位置在此统一收口。此前各图各自设定（y=-0.12 / 默认右侧悬浮 等），
+    右侧悬浮图例会压住绘图区最右侧的数据点，是标签重叠的主要来源。
+    本函数在各图 update_layout 之后调用，故此处设定为最终生效值。
+    """
     try:
         fig.update_xaxes(showline=True, linewidth=1.5,
                          linecolor='rgba(255, 255, 255, 0.4)', mirror=True,
                          zeroline=True, zerolinewidth=1.5,
                          zerolinecolor='rgba(255, 255, 255, 0.5)')
+    except Exception:
+        pass
+    try:
+        fig.update_layout(
+            legend=dict(orientation="h", y=-0.15, x=0.5,
+                        xanchor="center", yanchor="top",
+                        font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+            margin=dict(b=64),
+        )
     except Exception:
         pass
     return fig
@@ -3694,19 +3833,66 @@ def fetch_hot_stocks():
     return hot_list
 
 # -------------------------------------------------------------------
+# V12 Bloomberg Edition：顶部实时快讯带（Live Ribbon）
+# -------------------------------------------------------------------
+def render_live_ribbon(n_top: int = 3, n_drawer: int = 10):
+    """导航栏下方的全宽实时快讯条：常驻 3 条，点击展开最近 10 条抽屉。
+
+    复用 fetch_cls_news() 已缓存的结果（财联社 / 同花顺 / 百度多源合并），
+    不额外发起网络请求。标题来自外部接口，必须转义后再插入 HTML——
+    否则一条含尖括号的电报就能破坏整个页面结构。
+    """
+    import html as _html
+    try:
+        news = fetch_cls_news() or []
+    except Exception:
+        news = []
+    if not news:
+        return
+    top = news[:n_top]
+    items = "".join(
+        f'<span class="bb-ribbon-item"><span class="t">{_html.escape(str(n.get("发布时间") or "")[:5])}</span>'
+        f'{_html.escape(str(n.get("标题") or "")[:46])}</span>'
+        for n in top)
+    drawer = "".join(
+        f'<div class="bb-news-item"><span class="bb-news-time">'
+        f'{_html.escape(str(n.get("发布日期") or ""))} {_html.escape(str(n.get("发布时间") or "")[:5])}</span>'
+        f'<span>{_html.escape(str(n.get("标题") or "")[:110])}</span></div>'
+        for n in news[:n_drawer])
+    st.html(
+        f'<div class="bb-ribbon">'
+        f'<div class="bb-ribbon-tag"><span class="bb-badge-live">Live Feed</span></div>'
+        f'<div class="bb-ribbon-body">{items}</div></div>'
+        f'<details style="margin:-6px 0 12px 0;">'
+        f'<summary style="cursor:pointer;font-size:0.7rem;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.5px;color:{C_NEUTRAL};'
+        f'list-style:none;padding:2px 0;">▾ 展开最近 {n_drawer} 条快讯</summary>'
+        f'<div class="bb-card" style="margin-top:6px;">{drawer}</div></details>')
+
+
+# -------------------------------------------------------------------
 # 3. 顶部 Hero Header (Anti Stock Report)
 # -------------------------------------------------------------------
-st.markdown("""
-<div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(226, 232, 240, 0.15); padding-bottom: 0.8rem; margin-bottom: 1.5rem;">
-    <div style="font-size: 1.5rem; font-weight: 800; display: flex; align-items: center; gap: 0.6rem; font-family: 'JetBrains Mono', monospace; letter-spacing: -0.5px;">
-        <span style="color:#00b865;">Anti</span>Stock Terminal <span style="font-size:0.7rem; background:rgba(0,184,101,0.15); color:#00b865; padding:2px 6px; border-radius:4px; font-weight:700;">v2.0 Objective</span>
+st.markdown(f"""
+<div style="display:flex; align-items:center; justify-content:space-between;
+            border-bottom:1px solid {C_BORDER}; border-top:2px solid {C_BB_ORANGE};
+            padding:0.75rem 0 0.7rem 0; margin-bottom:0.9rem;">
+    <div style="display:flex; align-items:baseline; gap:0.7rem;">
+        <span class="bb-header" style="font-size:1.5rem;">
+            <span style="color:#00b865;">Anti</span>Stock Terminal
+        </span>
+        <span class="bb-label">V12 · Bloomberg Edition</span>
     </div>
-    <div style="font-size: 0.85rem; opacity: 0.7; font-weight: 500;">
-        客观数据聚合引擎 | 全球市场主线 | 零主观预测
-    </div>
+    <div class="bb-label-mute">客观数据聚合引擎 · 全球市场主线 · 零主观预测</div>
 </div>
 """, unsafe_allow_html=True)
 st.caption("⚠️ 本终端仅做客观公开数据聚合与可视化，绝不生成任何投资评级、目标价推荐或仓位建议。")
+
+# V12：导航栏下方实时快讯带
+try:
+    render_live_ribbon()
+except Exception as e:
+    print("[live_ribbon ERROR]", repr(e))
 
 # -------------------------------------------------------------------
 # 第一层：标的搜索栏 + API Key + 生成按钮（V8 全局渲染顺序重排：置于首屏）
@@ -3740,6 +3926,178 @@ with st.spinner("🌐 正在接入全球市场实时数据..."):
     global_markets, hot_sector_info = fetch_global_markets()
     hot_stocks_list = fetch_hot_stocks()
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_riskfree_rate():
+    """无风险利率锚：中国 10Y 国债收益率。
+    首选东财中美国债序列（附带美债 10Y 可算利差）；降级中债收益率曲线 10Y。"""
+    try:
+        _sd = (datetime.datetime.now() - datetime.timedelta(days=40)).strftime("%Y%m%d")
+        df = _fetch_with_timeout(ak.bond_zh_us_rate, kwargs={"start_date": _sd},
+                                 timeout_s=25, default=None)
+        if df is not None and isinstance(df, pd.DataFrame) and not df.empty and "中国国债收益率10年" in df.columns:
+            d = df.dropna(subset=["中国国债收益率10年"])
+            if not d.empty:
+                row, prev = d.iloc[-1], (d.iloc[-2] if len(d) > 1 else None)
+                # V12：中美利差必须取"两边都有报价的同一天"。
+                # 东财序列里美债 10Y 比中债晚一个交易日发布，最新一行的美债列常为 NaN；
+                # 旧写法只对中债列 dropna 后取最后一行，于是 us10 几乎永远是 None，
+                # 中美利差卡片长期空白（P2 右侧那一大块留白即源于此）。
+                both = df.dropna(subset=["中国国债收益率10年", "美国国债收益率10年"])
+                us10 = us10_date = us10_cn = None
+                if not both.empty:
+                    _b = both.iloc[-1]
+                    try:
+                        us10 = float(_b["美国国债收益率10年"])
+                        us10_cn = float(_b["中国国债收益率10年"])
+                        us10_date = str(_b["日期"])
+                    except Exception:
+                        us10 = us10_date = us10_cn = None
+                return dict(date=str(row["日期"]), cn10=float(row["中国国债收益率10年"]),
+                            cn10_prev=(float(prev["中国国债收益率10年"]) if prev is not None else None),
+                            us10=us10, us10_date=us10_date, us10_cn=us10_cn,
+                            source="东方财富·中美国债收益率序列")
+    except Exception:
+        pass
+    try:
+        _end = datetime.datetime.now()
+        _start = _end - datetime.timedelta(days=12)
+        df = _fetch_with_timeout(ak.bond_china_yield,
+                                 kwargs={"start_date": _start.strftime("%Y%m%d"),
+                                         "end_date": _end.strftime("%Y%m%d")},
+                                 timeout_s=25, default=None)
+        if df is not None and not df.empty:
+            c = df[df["曲线名称"].astype(str).str.contains("国债")]
+            if not c.empty and "10年" in c.columns:
+                row = c.dropna(subset=["10年"]).iloc[-1]
+                return dict(date=str(row["日期"]), cn10=float(row["10年"]),
+                            cn10_prev=None, us10=None, source="中债·国债收益率曲线")
+    except Exception:
+        pass
+    return None
+
+
+
+# ---------------------------------------------------------------------------
+# V12 Bloomberg Edition：跨资产表现矩阵（Cross-Asset Heat Matrix）
+# ---------------------------------------------------------------------------
+# 数据源经逐一实测确认（2026-09）：
+#   CL=F / GC=F / ^TNX / CNY=X  → 有完整日线序列，可算涨跌幅与迷你趋势线
+#   XIN9.FGI（富时中国A50）     → 仅返回单点现价，无历史序列
+#   CNH=X（离岸人民币）          → 同样仅单点，故改用 CNY=X 并如实标注为在岸口径
+# akshare 的 futures_foreign_commodity_realtime 当前版本抛
+# "Length mismatch" 内部错误，不可用；故商品口径统一走 yfinance。
+# 拿不到历史的资产照常展示现价，趋势列显式标注缺失，绝不用任何推算值填充。
+# ---------------------------------------------------------------------------
+_CROSS_ASSETS = [
+    ("WTI 原油",       "CL=F",      "NYMEX · 美元/桶",      2),
+    ("COMEX 黄金",     "GC=F",      "COMEX · 美元/盎司",    2),
+    ("美债 10Y",       "^TNX",      "US Treasury · %",      3),
+    ("美元/人民币",     "CNY=X",     "在岸中间价口径",        4),
+    ("富时中国 A50",   "XIN9.FGI",  "SGX 期货 · 点",        2),
+]
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_cross_asset_matrix(n_days: int = 5):
+    """大类资产快照：最新价 / 日内涨跌幅 / 近 N 日收盘序列。
+
+    每个标的独立 try 包裹——单一资产取数失败不得影响其余行的渲染。
+    """
+    rows = []
+    for name, tk, sub, dp in _CROSS_ASSETS:
+        rec = dict(name=name, ticker=tk, sub=sub, dp=dp,
+                   last=None, chg_pct=None, spark=[])
+        try:
+            h = _fetch_with_timeout(
+                lambda _t=tk: yf.Ticker(_t).history(period="1mo", interval="1d"),
+                timeout_s=20, default=None)
+            if h is not None and not h.empty and "Close" in h.columns:
+                c = h["Close"].dropna()
+                if len(c) >= 1:
+                    rec["last"] = float(c.iloc[-1])
+                if len(c) >= 2:
+                    rec["chg_pct"] = float((c.iloc[-1] / c.iloc[-2] - 1) * 100)
+                    rec["spark"] = [float(x) for x in c.tail(n_days).tolist()]
+        except Exception:
+            pass
+        rows.append(rec)
+
+    # 中债 10Y 复用资金面监控室已有的取数（东财中美国债序列），避免重复请求
+    try:
+        _rf = fetch_riskfree_rate()
+        if _rf and _rf.get("cn10") is not None:
+            _prev = _rf.get("cn10_prev")
+            rows.insert(3, dict(
+                name="中债 10Y", ticker="CGB10Y", sub=f"{_rf.get('source','')} · %", dp=4,
+                last=float(_rf["cn10"]),
+                chg_pct=(float((_rf["cn10"] / _prev - 1) * 100) if _prev else None),
+                spark=[]))
+    except Exception:
+        pass
+    return rows
+
+
+def _bb_sparkline(vals, up: bool, h: int = 22) -> str:
+    """迷你趋势线：用 div 微型柱阵实现。
+
+    实测 Streamlit 的 HTML 消毒器会把 <svg> 整个剥离（同一单元格内纯文本
+    span 正常渲染、polyline 却消失），故不能用 SVG；Plotly 为 5 个点各起一个
+    图表实例开销也不合理。这里退回纯 div + inline style，全站已大量验证可渲染。
+    """
+    if not vals or len(vals) < 2:
+        return '<span class="bb-na">历史缺失</span>'
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or 1.0
+    col = C_UP if up else C_DOWN
+    bars = "".join(
+        f'<div style="width:5px;height:{3 + ((v - lo) / rng) * (h - 5):.1f}px;'
+        f'background:{col};opacity:{0.45 + 0.55 * (i + 1) / len(vals):.2f};'
+        f'border-radius:1px;"></div>'
+        for i, v in enumerate(vals))
+    return (f'<div style="display:inline-flex;align-items:flex-end;gap:2px;'
+            f'height:{h}px;vertical-align:middle;">{bars}</div>')
+
+
+def render_cross_asset_matrix():
+    """彭博式大类资产矩阵：紧凑表格 + 等宽数字 + 迷你趋势线。"""
+    rows = fetch_cross_asset_matrix()
+    st.markdown(
+        '<div style="display:flex;align-items:baseline;gap:10px;margin:2px 0 8px 0;">'
+        '<span class="bb-header" style="font-size:1.15rem;">跨资产表现矩阵</span>'
+        '<span class="bb-label">CROSS-ASSET · DAILY</span></div>',
+        unsafe_allow_html=True)
+
+    body = ""
+    for r in rows:
+        if r["last"] is None:
+            val_cell = '<span class="bb-na">取数失败</span>'
+            chg_cell = '<span class="bb-na">—</span>'
+            spark_cell = '<span class="bb-na">—</span>'
+        else:
+            val_cell = f'<span class="bb-num">{r["last"]:,.{r["dp"]}f}</span>'
+            if r["chg_pct"] is None:
+                chg_cell = '<span class="bb-na">无前收</span>'
+                spark_cell = '<span class="bb-na">历史缺失</span>'
+            else:
+                _up = r["chg_pct"] >= 0
+                _c = C_UP if _up else C_DOWN
+                chg_cell = (f'<span class="bb-num" style="color:{_c};">'
+                            f'{r["chg_pct"]:+.2f}%</span>')
+                spark_cell = _bb_sparkline(r["spark"], _up)
+        body += (f'<tr><td><span class="bb-asset-name">{r["name"]}</span><br>'
+                 f'<span class="bb-asset-sub">{r["sub"]}</span></td>'
+                 f'<td>{val_cell}</td><td>{chg_cell}</td>'
+                 f'<td style="text-align:right;">{spark_cell}</td></tr>')
+
+    st.html(
+        '<div class="bb-card bb-card-lead">'
+        '<table class="bb-matrix"><thead><tr>'
+        '<th>Asset</th><th>Last</th><th>Chg %</th><th style="text-align:right;">5D Trend</th>'
+        '</tr></thead><tbody>' + body + '</tbody></table></div>')
+    st.caption("数据源：yfinance（CL=F / GC=F / ^TNX / CNY=X / XIN9.FGI）与东方财富中美国债序列。"
+               "标注「历史缺失」者为该接口仅返回当前报价、无日线序列，不以任何推算值填充。")
+
+
 # --- 4.1 全球市场主线 ---
 st.markdown(f"### 🌐 全球市场主线 <span style='font-size:0.82rem; opacity:0.65; margin-left:0.5rem;'>当前主线板块: <b style=\"color:#00b865\">{hot_sector_info['name']} ({hot_sector_info['chg']:+.1f}%)</b></span>", unsafe_allow_html=True)
 region_icons = {'US': '🇺🇸', 'JP': '🇯🇵', 'KR': '🇰🇷', 'CN': '🇨🇳'}
@@ -3767,6 +4125,17 @@ for i, (region, rdata) in enumerate(global_markets.items()):
             market_card_template = f'<div class="market-card{hot_cls}">{hot_badge}<div class="market-flag">{icon}</div><div class="market-name">{region_label} · {idx_name}</div><div class="market-index">{price_fmt}</div><div class="{chg_cls}">{chg_sign}{chg:.2f}%</div>{sector_html}</div>'
             st.markdown(market_card_template, unsafe_allow_html=True)
             break
+
+st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
+
+# --- 4.15 V12：跨资产表现矩阵（大类资产看板）---
+try:
+    render_cross_asset_matrix()
+except Exception as e:
+    import traceback as _tb
+    print("[cross_asset ERROR]", repr(e))
+    _tb.print_exc()
+    st.warning(f"跨资产矩阵暂时异常: {type(e).__name__}")
 
 st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
 
@@ -3884,56 +4253,6 @@ def fetch_cny_fx(n_days: int = 90):
         hist=d[[date_col, "_rate"]].rename(columns={date_col: "日期", "_rate": "中间价"}),
         source="中国银行外汇牌价·央行中间价",
     )
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_riskfree_rate():
-    """无风险利率锚：中国 10Y 国债收益率。
-    首选东财中美国债序列（附带美债 10Y 可算利差）；降级中债收益率曲线 10Y。"""
-    try:
-        _sd = (datetime.datetime.now() - datetime.timedelta(days=40)).strftime("%Y%m%d")
-        df = _fetch_with_timeout(ak.bond_zh_us_rate, kwargs={"start_date": _sd},
-                                 timeout_s=25, default=None)
-        if df is not None and isinstance(df, pd.DataFrame) and not df.empty and "中国国债收益率10年" in df.columns:
-            d = df.dropna(subset=["中国国债收益率10年"])
-            if not d.empty:
-                row, prev = d.iloc[-1], (d.iloc[-2] if len(d) > 1 else None)
-                # V12：中美利差必须取"两边都有报价的同一天"。
-                # 东财序列里美债 10Y 比中债晚一个交易日发布，最新一行的美债列常为 NaN；
-                # 旧写法只对中债列 dropna 后取最后一行，于是 us10 几乎永远是 None，
-                # 中美利差卡片长期空白（P2 右侧那一大块留白即源于此）。
-                both = df.dropna(subset=["中国国债收益率10年", "美国国债收益率10年"])
-                us10 = us10_date = us10_cn = None
-                if not both.empty:
-                    _b = both.iloc[-1]
-                    try:
-                        us10 = float(_b["美国国债收益率10年"])
-                        us10_cn = float(_b["中国国债收益率10年"])
-                        us10_date = str(_b["日期"])
-                    except Exception:
-                        us10 = us10_date = us10_cn = None
-                return dict(date=str(row["日期"]), cn10=float(row["中国国债收益率10年"]),
-                            cn10_prev=(float(prev["中国国债收益率10年"]) if prev is not None else None),
-                            us10=us10, us10_date=us10_date, us10_cn=us10_cn,
-                            source="东方财富·中美国债收益率序列")
-    except Exception:
-        pass
-    try:
-        _end = datetime.datetime.now()
-        _start = _end - datetime.timedelta(days=12)
-        df = _fetch_with_timeout(ak.bond_china_yield,
-                                 kwargs={"start_date": _start.strftime("%Y%m%d"),
-                                         "end_date": _end.strftime("%Y%m%d")},
-                                 timeout_s=25, default=None)
-        if df is not None and not df.empty:
-            c = df[df["曲线名称"].astype(str).str.contains("国债")]
-            if not c.empty and "10年" in c.columns:
-                row = c.dropna(subset=["10年"]).iloc[-1]
-                return dict(date=str(row["日期"]), cn10=float(row["10年"]),
-                            cn10_prev=None, us10=None, source="中债·国债收益率曲线")
-    except Exception:
-        pass
-    return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -4475,12 +4794,38 @@ risk_preference = "稳健型"
 
 
 def fmt_price_val(val, currency=""):
-    """格式化价格数字，消除浮点异常并统一显示"""
-    if isinstance(val, (int, float)) and not np.isnan(val):
-        if currency in ["USD", "$"] or val < 1000:
-            return f"${val:.2f}"
-        return f"{val:.2f} 元"
-    return "N/A"
+    """按币种标准化价格显示。
+
+    V12 修正：旧实现为 `if currency in ["USD","$"] or val < 1000: return f"${val}"`,
+    那个 `or val < 1000` 会把**任何低于 1000 的 A 股价格都标成美元**
+    （招商银行 35.20 元 → "$35.20"）。绝大多数 A 股都在 1000 以下，
+    等于全站币种系统性标错，对金融终端属于硬性错误。
+    现改为严格按 currency 字段判定，绝不用数值大小猜币种。
+
+    口径：美元前置符号（$120.50）；人民币 / 港币后置单位（1,250.00 元 / 23.50 港元）。
+    """
+    if not (isinstance(val, (int, float)) and not isinstance(val, bool)):
+        return "N/A"
+    try:
+        if np.isnan(val) or np.isinf(val):
+            return "N/A"
+    except (TypeError, ValueError):
+        return "N/A"
+    cur = str(currency or "").strip().upper()
+    if cur in ("USD", "$"):
+        return f"${val:,.2f}"
+    if cur in ("HKD", "HK$"):
+        return f"{val:,.2f} 港元"
+    if cur in ("CNY", "RMB", "CNH", "¥", "￥"):
+        return f"{val:,.2f} 元"
+    if cur in ("EUR", "€"):
+        return f"€{val:,.2f}"
+    if cur in ("JPY", "¥JP"):
+        return f"¥{val:,.0f}"
+    if not cur:
+        # 币种未知时不臆测符号，只给数值——错误的货币符号比没有符号更危险
+        return f"{val:,.2f}"
+    return f"{val:,.2f} {cur}"
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_all_data(ticker_input):
@@ -5775,7 +6120,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
 
                             if not df_pie.empty:
                                 # V10 P1：hole 提至 0.65，圆环更通透有呼吸感
-                                fig_donut = px.pie(df_pie, values='Value', names='Label', hole=0.65,
+                                fig_donut = px.pie(df_pie, values='Value', names='Label', hole=0.68,
                                                    color='Label', color_discrete_map=dict(zip(labels, colors)))
                                 fig_donut.update_layout(
                                     height=240, margin=dict(l=10, r=10, t=15, b=35),
@@ -5841,9 +6186,12 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                             df_prod = main_comp[main_comp['分类类型'].str.contains('产品', na=False)] if '分类类型' in main_comp.columns else pd.DataFrame()
                             if not df_prod.empty and '主营构成' in df_prod.columns and '收入比例' in df_prod.columns:
                                 df_prod['收入比例数值'] = df_prod['收入比例'].astype(str).str.replace('%', '', regex=False).astype(float)
-                                fig_p1 = px.pie(df_prod, values='收入比例数值', names='主营构成', hole=0.4, title="按产品分类营收占比", color_discrete_sequence=px.colors.sequential.Teal)
-                                fig_p1.update_traces(textinfo='label+percent', textposition='inside', showlegend=False)
-                                fig_p1.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=300, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                                # V12：hole 0.4→0.68 且标签外置带指引线。中文主营名称较长，
+                                # 原先 textposition='inside' 在窄扇区里会把文字压成一团。
+                                fig_p1 = px.pie(df_prod, values='收入比例数值', names='主营构成', hole=0.68, title="按产品分类营收占比", color_discrete_sequence=px.colors.sequential.Teal)
+                                fig_p1.update_traces(textinfo='label+percent', textposition='outside',
+                                                     textfont=dict(size=10), automargin=True, showlegend=False)
+                                fig_p1.update_layout(margin=dict(t=40, b=30, l=40, r=40), height=330, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', uniformtext=dict(minsize=9, mode='hide'))
                                 st.plotly_chart(fig_p1, width="stretch")
                             else:
                                 st.info("暂无按产品分类数据")
@@ -5852,9 +6200,10 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                             df_reg = main_comp[main_comp['分类类型'].str.contains('地区', na=False)] if '分类类型' in main_comp.columns else pd.DataFrame()
                             if not df_reg.empty and '主营构成' in df_reg.columns and '收入比例' in df_reg.columns:
                                 df_reg['收入比例数值'] = df_reg['收入比例'].astype(str).str.replace('%', '', regex=False).astype(float)
-                                fig_p2 = px.pie(df_reg, values='收入比例数值', names='主营构成', hole=0.4, title="按地区分类营收占比", color_discrete_sequence=px.colors.sequential.Purp)
-                                fig_p2.update_traces(textinfo='label+percent', textposition='inside', showlegend=False)
-                                fig_p2.update_layout(margin=dict(t=40, b=10, l=10, r=10), height=300, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                                fig_p2 = px.pie(df_reg, values='收入比例数值', names='主营构成', hole=0.68, title="按地区分类营收占比", color_discrete_sequence=px.colors.sequential.Purp)
+                                fig_p2.update_traces(textinfo='label+percent', textposition='outside',
+                                                     textfont=dict(size=10), automargin=True, showlegend=False)
+                                fig_p2.update_layout(margin=dict(t=40, b=30, l=40, r=40), height=330, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', uniformtext=dict(minsize=9, mode='hide'))
                                 st.plotly_chart(fig_p2, width="stretch")
                             else:
                                 st.info("暂无按地区分类数据")
