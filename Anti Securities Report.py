@@ -4694,10 +4694,12 @@ def render_macro_calendar():
         for i, ev in enumerate(evs):
             tier1 = ev.get("tier1", False)
             if tier1:
-                prefix = "🔥 重磅"
-                if "非农" in ev['title'] or "失业" in ev['title'] or "ADP" in ev['title']: prefix = "🔥 大非农"
-                elif "FOMC" in ev['title'] or "议息" in ev['title'] or "决议" in ev['title']: prefix = "⚡ 美联储"
-                elif "CPI" in ev['title'] or "PCE" in ev['title'] or "GDP" in ev['title']: prefix = "📊 核心宏观"
+                # V12：改用彭博式大写事件标记（与全站微型大写标签同一套排印语言）
+                prefix = "🔥 TIER-1"
+                if "非农" in ev['title'] or "失业" in ev['title'] or "ADP" in ev['title']: prefix = "🔥 NON-FARM"
+                elif "FOMC" in ev['title'] or "议息" in ev['title'] or "决议" in ev['title']: prefix = "⚡ FOMC"
+                elif "CPI" in ev['title'] or "PCE" in ev['title']: prefix = "📊 INFLATION"
+                elif "GDP" in ev['title']: prefix = "📊 GDP"
                 btn_title = f"{prefix} · {ev['date']} {ev.get('time','')} · {ev['region']}\n\n{ev['title']}"
             else:
                 btn_title = f"{ev['date']} {ev.get('time','')} · {ev['region']}\n\n{ev['title']}"
@@ -4826,6 +4828,69 @@ def fmt_price_val(val, currency=""):
         # 币种未知时不臆测符号，只给数值——错误的货币符号比没有符号更危险
         return f"{val:,.2f}"
     return f"{val:,.2f} {cur}"
+
+
+def render_target_band(low, mean, high, cur_price, currency="", n_analysts=None):
+    """V12：机构目标价带宽（靶心带宽图）+ 现价折溢价定位。
+
+    用 div 定位实现而非 Plotly/SVG：Streamlit 会剥离 <svg>，
+    而为一根横条启动 Plotly 实例并不划算。
+    任一端点缺失即整体降级为文字提示，绝不以估算值补齐区间。
+    """
+    def _ok(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and not np.isnan(v)
+
+    if not (_ok(low) and _ok(high) and _ok(cur_price)) or high <= low:
+        return ('<div class="bb-na" style="padding:8px 0;">'
+                '机构目标价区间数据缺失，不做任何推算填充。</div>')
+
+    span = high - low
+    pos = max(0.0, min(100.0, (cur_price - low) / span * 100))
+    mean_pos = (max(0.0, min(100.0, (mean - low) / span * 100)) if _ok(mean) else None)
+
+    if _ok(mean) and mean:
+        gap = (cur_price / mean - 1) * 100
+        gap_col = C_DOWN if gap > 0 else C_UP
+        gap_txt = (f'现价较机构均值<b style="color:{gap_col};"> '
+                   f'{"溢价" if gap > 0 else "折价"} {abs(gap):.1f}%</b>')
+    else:
+        gap_txt = '<span class="bb-na">均值缺失，无法计算折溢价</span>'
+
+    mean_marker = ""
+    if mean_pos is not None:
+        mean_marker = (f'<div style="position:absolute;left:{mean_pos:.1f}%;top:-3px;'
+                       f'width:2px;height:20px;background:{C_NEUTRAL};opacity:0.9;"></div>')
+
+    head = f'<span class="bb-label">Analyst Target Band</span>'
+    if n_analysts:
+        head += f'<span class="bb-label-mute"> · {n_analysts} 位分析师</span>'
+
+    return (
+        f'<div style="margin:2px 0 4px 0;">{head}</div>'
+        f'<div style="position:relative;height:14px;margin:16px 0 6px 0;">'
+        f'  <div style="position:absolute;top:5px;left:0;right:0;height:4px;'
+        f'       background:linear-gradient(90deg,{C_UP} 0%,{C_NEUTRAL} 50%,{C_DOWN} 100%);'
+        f'       opacity:0.45;border-radius:2px;"></div>'
+        f'  {mean_marker}'
+        f'  <div style="position:absolute;left:{pos:.1f}%;top:-4px;width:3px;height:22px;'
+        f'       background:{C_BB_ORANGE};box-shadow:0 0 8px {C_BB_ORANGE};"></div>'
+        f'</div>'
+        f'<div style="display:flex;justify-content:space-between;font-size:0.7rem;'
+        f'     color:{C_NEUTRAL};margin-bottom:8px;">'
+        f'  <span>最低 <span class="bb-num" style="font-size:0.76rem;">'
+        f'{fmt_price_val(low, currency)}</span></span>'
+        f'  <span>最高 <span class="bb-num" style="font-size:0.76rem;">'
+        f'{fmt_price_val(high, currency)}</span></span>'
+        f'</div>'
+        f'<div style="font-size:0.82rem;color:{C_TEXT};line-height:1.7;">'
+        f'  <span style="color:{C_BB_ORANGE};">▮</span> 现价 '
+        f'<span class="bb-num">{fmt_price_val(cur_price, currency)}</span><br>'
+        f'  <span style="color:{C_NEUTRAL};">▮</span> 机构均值 '
+        f'<span class="bb-num">{fmt_price_val(mean, currency) if _ok(mean) else "—"}</span><br>'
+        f'  {gap_txt}</div>'
+        f'<div style="font-size:0.7rem;opacity:0.55;margin-top:8px;line-height:1.6;">'
+        f'数据来源：yfinance 分析师一致预期（历史事实记录）。'
+        f'带宽仅呈现第三方预期分布区间，不构成任何投资建议。</div>')
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_all_data(ticker_input):
@@ -6143,15 +6208,17 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         st.info("暂无评级数据")
 
                 with pie_r:
+                    # V12：原为三行纯文字的最高/均值/最低，读者无法一眼判断现价
+                    # 处在机构预期区间的哪个位置。改为靶心带宽图 + 折溢价定位。
+                    _n_an = None
+                    try:
+                        _n_an = total_analysts
+                    except NameError:
+                        pass
                     st.markdown(
-                        f"""
-**第三方目标价历史区间**
-- 🎯 最高: {fmt_price_val(high_p, currency) if high_p else 'N/A'}
-- ⚖️ 均值: {fmt_price_val(mean_p, currency) if mean_p else 'N/A'}
-- 🛡️ 最低: {fmt_price_val(low_p, currency) if low_p else 'N/A'}
-
-<div style="font-size:0.75rem; opacity:0.6; margin-top:0.6rem;">数据来源：yfinance 分析师一致预期（历史事实记录）<br>不构成投资建议</div>
-""", unsafe_allow_html=True)
+                        render_target_band(low_p, mean_p, high_p, current_price,
+                                           currency, _n_an),
+                        unsafe_allow_html=True)
 
             st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
 
