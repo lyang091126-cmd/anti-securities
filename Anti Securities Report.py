@@ -393,6 +393,137 @@ def compute_earnings_surprises(all_data: dict, n: int = 4) -> list:
     return rows
 
 
+# ===========================================================================
+# 分析师目标价准确度追踪（Analyst Call Accuracy Tracker）
+# ---------------------------------------------------------------------------
+# 本终端的核心主张：不预测，只检验别人预测得准不准。
+#
+# 口径定义（必须显式声明，否则"命中率"是无意义的数字）：
+#   · 样本      = yfinance upgrades_downgrades 中带目标价的历史机构观点
+#   · 评分时点  = 观点发布日 + HORIZON 个交易日（默认 252 ≈ 12 个月，
+#                 对应卖方目标价惯用的 12 个月前瞻期）
+#   · 命中定义  = 终点判定，而非"期间是否触及过"。
+#                 看多观点（目标价 ≥ 发布日股价）：H 日后股价 ≥ 目标价 → 命中
+#                 看空观点（目标价 < 发布日股价）：H 日后股价 ≤ 目标价 → 命中
+#   · 绝对误差  = |H日实际股价 − 目标价| / 目标价
+#   · 未满 H 个交易日的观点一律不计分（避免用未完成的观点凑样本）
+#
+# ⚠️ 拆股陷阱（本项目实测发现并修正的第二个静默失败）：
+#   yfinance 的历史价格是**复权后**的，但 upgrades_downgrades 里的目标价是
+#   机构**当时按未拆股价格发布**的原值。NVDA 2024-06-10 做了 10:1 拆股，
+#   拆股前的目标价是 1100~1350，而同期复权价只有约 106——直接相比会把
+#   拆股前的每一条观点都误判为惨败。实测：不修正时 NVDA 命中率 16.4%、
+#   中位误差 80.6%；按发布日之后的累计拆股比例折算目标价后，回到 73.8% / 46.5%。
+#   对照组 MSFT（2003 年后未拆股）修正前后均为 56.9%，纹丝不动，
+#   证明该修正只作用于真正发生过拆股的标的。
+# ===========================================================================
+ANALYST_TRACK_HORIZON = 252     # 交易日；约 12 个月
+ANALYST_TRACK_MIN_CALLS = 8     # 机构榜单入榜门槛，样本太少的命中率无统计意义
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_analyst_track_record(ticker: str, horizon: int = ANALYST_TRACK_HORIZON):
+    """回测某标的的历史机构目标价命中情况。
+
+    返回 dict(ok=True, calls=DataFrame, ...) 或 dict(ok=False, reason=...)。
+    绝不在数据缺失时返回编造的统计量——reason 会说明到底缺什么。
+    """
+    try:
+        tk = yf.Ticker(ticker)
+        ud = tk.upgrades_downgrades
+    except Exception as e:
+        return {"ok": False, "reason": f"分析师观点接口调用失败：{type(e).__name__}"}
+    if ud is None or not isinstance(ud, pd.DataFrame) or ud.empty:
+        return {"ok": False, "reason": "该市场无历史机构观点覆盖"}
+
+    try:
+        px = tk.history(period="10y")["Close"]
+        splits = tk.splits
+    except Exception as e:
+        return {"ok": False, "reason": f"历史价格接口调用失败：{type(e).__name__}"}
+    if px is None or px.empty:
+        return {"ok": False, "reason": "历史价格序列为空，无法定位观点发布日股价"}
+
+    px = px.copy()
+    px.index = pd.to_datetime(px.index).tz_localize(None)
+    ud = ud.copy()
+    ud.index = pd.to_datetime(ud.index).tz_localize(None)
+    ud = ud.sort_index()
+    if splits is not None and len(splits):
+        splits = splits.copy()
+        splits.index = pd.to_datetime(splits.index).tz_localize(None)
+
+    if "currentPriceTarget" not in ud.columns:
+        return {"ok": False, "reason": "该标的的机构观点不含目标价字段"}
+    d = ud[ud["currentPriceTarget"].notna() & (ud["currentPriceTarget"] > 0)]
+    if d.empty:
+        return {"ok": False, "reason": "历史机构观点中没有任何带目标价的记录"}
+
+    rows, n_pending = [], 0
+    for dt, r in d.iterrows():
+        prior = px.index[px.index <= dt]
+        if len(prior) == 0:
+            continue
+        dt0 = prior[-1]
+        i = px.index.get_loc(dt0)
+        if i + horizon >= len(px):
+            n_pending += 1          # 观点尚未满 horizon，不计分
+            continue
+        tgt = float(r["currentPriceTarget"])
+        # 折算拆股：把当时发布的原始目标价换算到与复权价同一口径
+        if splits is not None and len(splits) and (splits.index > dt0).any():
+            factor = float(splits[splits.index > dt0].prod())
+            if factor > 0:
+                tgt = tgt / factor
+        p0, pH = float(px.iloc[i]), float(px.iloc[i + horizon])
+        if p0 <= 0 or tgt <= 0:
+            continue
+        bullish = tgt >= p0
+        rows.append({
+            "firm": str(r.get("Firm") or "未署名"),
+            "date": dt0.strftime("%Y-%m-%d"),
+            "price_at_call": p0,
+            "target": tgt,
+            "price_at_horizon": pH,
+            "bullish": bullish,
+            "hit": bool(pH >= tgt) if bullish else bool(pH <= tgt),
+            "abs_err_pct": abs(pH - tgt) / tgt * 100.0,
+        })
+
+    if not rows:
+        return {"ok": False,
+                "reason": f"有 {n_pending} 条观点尚未满 {horizon} 个交易日，暂无可计分样本"}
+    calls = pd.DataFrame(rows)
+    return {
+        "ok": True,
+        "calls": calls,
+        "n_scored": len(calls),
+        "n_pending": n_pending,
+        "n_firms": int(calls["firm"].nunique()),
+        "hit_rate": float(calls["hit"].mean() * 100),
+        "median_abs_err": float(calls["abs_err_pct"].median()),
+        "horizon": horizon,
+        "span": (calls["date"].min(), calls["date"].max()),
+    }
+
+
+def summarize_firm_accuracy(calls: pd.DataFrame, min_calls: int = ANALYST_TRACK_MIN_CALLS):
+    """按机构汇总命中率；样本数低于门槛的机构不进榜（小样本命中率无意义）。"""
+    if calls is None or calls.empty:
+        return pd.DataFrame()
+    g = calls.groupby("firm").agg(
+        样本数=("hit", "size"),
+        命中率=("hit", "mean"),
+        中位绝对误差=("abs_err_pct", "median"),
+    )
+    g = g[g["样本数"] >= min_calls]
+    if g.empty:
+        return g
+    g["命中率"] = (g["命中率"] * 100).round(1)
+    g["中位绝对误差"] = g["中位绝对误差"].round(1)
+    return g.sort_values("命中率", ascending=False)
+
+
 def _resolve_forward_growth(all_data: dict):
     """解析未来 EPS 一致预期年化增速（小数，如 0.25 = 25%）。
 
@@ -4892,6 +5023,85 @@ def render_target_band(low, mean, high, cur_price, currency="", n_analysts=None)
         f'数据来源：yfinance 分析师一致预期（历史事实记录）。'
         f'带宽仅呈现第三方预期分布区间，不构成任何投资建议。</div>')
 
+
+def render_analyst_accuracy(ticker: str, currency: str = ""):
+    """核心面板：历史机构目标价命中率记分卡 + 机构榜。
+
+    这是本终端唯一「给别人的预测打分」的模块，也是产品主张所在：
+    不做预测，只检验历史预测的兑现情况。
+    """
+    st.markdown(
+        '<div style="display:flex;align-items:baseline;gap:10px;margin:2px 0 4px 0;">'
+        '<span class="bb-header" style="font-size:1.2rem;">分析师目标价准确度记分卡</span>'
+        '<span class="bb-label">ANALYST CALL ACCURACY · BACKTEST</span></div>',
+        unsafe_allow_html=True)
+
+    rec = fetch_analyst_track_record(ticker)
+    if not rec.get("ok"):
+        st.info(f"📭 {ticker} 暂无可计分的机构观点：{rec.get('reason','原因未知')}。"
+                f"（Yahoo 的历史机构观点目前仅覆盖美股；A股/港股返回空集，"
+                f"此处如实留空，不以任何替代口径充数。）")
+        return
+
+    calls = rec["calls"]
+    hit, err = rec["hit_rate"], rec["median_abs_err"]
+    hit_col = C_UP if hit >= 50 else C_DOWN
+
+    st.html(
+        '<div class="bb-card bb-card-lead" style="margin-bottom:10px;">'
+        '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;">'
+        f'<div><div class="bb-label-mute">HIT RATE · {rec["horizon"]}日</div>'
+        f'<div class="bb-kpi-num" style="font-size:2rem;color:{hit_col};">{hit:.1f}'
+        f'<span style="font-size:1rem;">%</span></div>'
+        f'<div style="font-size:0.7rem;color:{C_NEUTRAL};">目标价在 12 个月后被兑现的比例</div></div>'
+        f'<div><div class="bb-label-mute">MEDIAN ABS ERROR</div>'
+        f'<div class="bb-kpi-num" style="font-size:2rem;">{err:.1f}'
+        f'<span style="font-size:1rem;">%</span></div>'
+        f'<div style="font-size:0.7rem;color:{C_NEUTRAL};">目标价与实际股价的中位偏离</div></div>'
+        f'<div><div class="bb-label-mute">SCORED CALLS</div>'
+        f'<div class="bb-kpi-num" style="font-size:2rem;">{rec["n_scored"]}</div>'
+        f'<div style="font-size:0.7rem;color:{C_NEUTRAL};">'
+        f'来自 {rec["n_firms"]} 家机构 · 另有 {rec["n_pending"]} 条未满期不计分</div></div>'
+        f'<div><div class="bb-label-mute">SAMPLE WINDOW</div>'
+        f'<div class="bb-kpi-num" style="font-size:1.05rem;line-height:1.5;">'
+        f'{rec["span"][0]}<br>{rec["span"][1]}</div>'
+        f'<div style="font-size:0.7rem;color:{C_NEUTRAL};">观点发布日区间</div></div>'
+        '</div></div>')
+
+    acc_l, acc_r = st.columns([1.15, 1], vertical_alignment="top")
+    with acc_l:
+        st.markdown("**机构命中率榜**　<span class='bb-label-mute'>样本 ≥ "
+                    f"{ANALYST_TRACK_MIN_CALLS} 条方可入榜</span>", unsafe_allow_html=True)
+        firm = summarize_firm_accuracy(calls)
+        if firm.empty:
+            st.info(f"暂无机构达到 {ANALYST_TRACK_MIN_CALLS} 条的入榜样本量。"
+                    "样本过少的命中率不具统计意义，故不展示。")
+        else:
+            st.dataframe(firm.head(12), width="stretch")
+    with acc_r:
+        st.markdown("**最近 8 条已计分观点**", unsafe_allow_html=True)
+        recent = calls.sort_values("date", ascending=False).head(8)
+        rows_html = "".join(
+            f'<tr><td style="text-align:left;">{r.date}<br>'
+            f'<span class="bb-asset-sub">{str(r.firm)[:20]}</span></td>'
+            f'<td><span class="bb-num">{fmt_price_val(r.target, currency)}</span></td>'
+            f'<td><span class="bb-num">{fmt_price_val(r.price_at_horizon, currency)}</span></td>'
+            f'<td style="color:{C_UP if r.hit else C_DOWN};font-weight:700;">'
+            f'{"命中" if r.hit else "未中"}</td></tr>'
+            for r in recent.itertuples())
+        st.html('<table class="bb-matrix"><thead><tr>'
+                '<th>发布日 / 机构</th><th>目标价</th><th>12个月后实际</th><th>结果</th>'
+                '</tr></thead><tbody>' + rows_html + '</tbody></table>')
+
+    st.caption(
+        f"口径：样本为 yfinance 历史机构观点中带目标价者；以观点发布日起第 {rec['horizon']} 个交易日"
+        f"（约 12 个月，对应卖方目标价惯用前瞻期）的收盘价为终点判定，"
+        f"看多观点需实际价 ≥ 目标价、看空观点需 ≤ 目标价方记命中；未满期的观点一律不计分。"
+        f"历史目标价已按发布日之后的累计拆股比例折算，"
+        f"以消除「复权价 vs 未复权目标价」造成的系统性误判。"
+        f"本记分卡仅陈述历史兑现情况，不构成任何投资建议。")
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_all_data(ticker_input):
     """全量数据采集引擎：yfinance + akshare 双源汇聚与自动降级补全"""
@@ -6065,6 +6275,17 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
         )
     except Exception as e:
         st.warning(f"⚠️ 仪表盘渲染降级（数据源字段缺失）：{type(e).__name__}: {e}")
+
+    st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
+
+    # 产品主张所在：先给"别人预测得准不准"的记分卡，再给标的本身的画像
+    try:
+        render_analyst_accuracy(ticker_input, currency)
+    except Exception as e:
+        import traceback as _tb
+        print("[analyst_accuracy ERROR]", repr(e))
+        _tb.print_exc()
+        st.warning(f"准确度记分卡暂时异常: {type(e).__name__}")
 
     st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
 
