@@ -8,3 +8,6 @@ debug_out.txt
 Anti Securities Report_pre_v8.py
 Anti Securities Report_prev_modular.py
 Anti Securities Report_backup.py
+
+# 同目录下的独立项目，不属于本仓库
+jev-quant/
