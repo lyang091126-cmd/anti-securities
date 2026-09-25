@@ -1,4 +1,4 @@
-with open(r'C:\Users\Lyang\Desktop\Python\Anti Securities Report_backup.py', 'r', encoding='utf-8') as f:
+with open(r'C:\Users\Lyang\Desktop\Python\anti-securities\Anti Securities Report_backup.py', 'r', encoding='utf-8') as f:
     content = f.read()
 
 except_block = '        except Exception as e:\n            st.error(f"⚠️ 生成报告时发生错误 (API 调用失败或格式解析错误): {e}")\n'
@@ -42,7 +42,7 @@ if len(parts) == 2:
         
         final_content = header + new_outer + new_llm_body + new_ui_part
         
-        with open(r'C:\Users\Lyang\Desktop\Python\Anti Securities Report.py', 'w', encoding='utf-8') as f:
+        with open(r'C:\Users\Lyang\Desktop\Python\anti-securities\Anti Securities Report.py', 'w', encoding='utf-8') as f:
             f.write(final_content)
         print('Refactor complete.')
     else:
