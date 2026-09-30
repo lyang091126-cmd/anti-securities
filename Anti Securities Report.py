@@ -91,6 +91,118 @@ if not st.session_state.get("intl_color_mode", False):
 
 
 # ===========================================================================
+# LLM 统一调用入口 + 用量账本（每用户成本的数据来源）
+# ---------------------------------------------------------------------------
+# 全站只有两处调用大模型：快讯解读（轻量）与研报摘要（重量）。
+# 此前两处各自按密钥前缀选服务商，且只认 "sk-proj-"，其余一律发往智谱——
+# 课程发放的 OpenRouter 密钥（sk-or- 开头）因此被错发到智谱而鉴权失败。
+# 现统一在此路由，并把每次调用的真实 token 用量记入 session_state，
+# 成本 = 输入 token × 输入单价 + 输出 token × 输出单价。
+# 单价取自 OpenRouter 公开价目接口（无需密钥），取不到即如实标注"单价未核实"，
+# 不写死任何未经核实的价格。
+# ===========================================================================
+_LLM_ROUTES = {
+    "openrouter": dict(label="OpenRouter", base_url="https://openrouter.ai/api/v1",
+                       light="openai/gpt-4o-mini", heavy="openai/gpt-4o"),
+    "openai": dict(label="OpenAI", base_url="https://api.openai.com/v1",
+                   light="gpt-4o-mini", heavy="gpt-4o"),
+    "zhipu": dict(label="智谱 GLM", base_url="https://open.bigmodel.cn/api/paas/v4/",
+                  light="glm-4-flash", heavy="glm-4-flash"),
+}
+# 本地模型名 → OpenRouter 价目表里的 id（用于查单价）
+_PRICE_ID = {"gpt-4o-mini": "openai/gpt-4o-mini", "gpt-4o": "openai/gpt-4o",
+             "openai/gpt-4o-mini": "openai/gpt-4o-mini", "openai/gpt-4o": "openai/gpt-4o"}
+
+
+def llm_provider(api_key: str) -> str:
+    """按密钥前缀判断服务商。智谱密钥形如 32位十六进制.后缀，不以 sk- 开头。"""
+    k = (api_key or "").strip()
+    if k.startswith("sk-or-"):
+        return "openrouter"
+    if k.startswith("sk-"):
+        return "openai"
+    return "zhipu"
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_llm_prices() -> dict:
+    """OpenRouter 公开价目表：{model_id: (输入美元/百万token, 输出美元/百万token)}。
+    取价失败返回空 dict，调用方据此标注"单价未核实"。"""
+    import json as _json
+    import urllib.request as _ur
+    try:
+        with _ur.urlopen("https://openrouter.ai/api/v1/models", timeout=20) as r:
+            data = _json.load(r).get("data", [])
+        out = {}
+        for m in data:
+            p = m.get("pricing") or {}
+            try:
+                out[m["id"]] = (float(p["prompt"]) * 1e6, float(p["completion"]) * 1e6)
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
+    except Exception:
+        return {}
+
+
+def llm_chat(api_key: str, messages: list, tier: str = "light",
+             temperature: float = 0.2, purpose: str = "") -> str:
+    """调用大模型并记账。异常原样抛出，由调用方决定如何提示用户。"""
+    prov = llm_provider(api_key)
+    route = _LLM_ROUTES[prov]
+    model = route[tier]
+    client = OpenAI(api_key=api_key, base_url=route["base_url"])
+    resp = client.chat.completions.create(model=model, messages=messages,
+                                          temperature=temperature)
+    usage = getattr(resp, "usage", None)
+    tok_in = int(getattr(usage, "prompt_tokens", 0) or 0)
+    tok_out = int(getattr(usage, "completion_tokens", 0) or 0)
+    price = fetch_llm_prices().get(_PRICE_ID.get(model, ""))
+    cost = (tok_in * price[0] + tok_out * price[1]) / 1e6 if price else None
+    st.session_state.setdefault("llm_ledger", []).append(dict(
+        time=datetime.datetime.now().strftime("%H:%M:%S"), purpose=purpose,
+        provider=route["label"], model=model, tok_in=tok_in, tok_out=tok_out,
+        price_in=(price[0] if price else None), price_out=(price[1] if price else None),
+        cost=cost))
+    return resp.choices[0].message.content
+
+
+def render_llm_cost_panel():
+    """每用户成本：本会话实测账本 + 单价来源。放在页面末尾，
+    这样能包含本次页面运行中刚发生的调用（Streamlit 自上而下执行）。"""
+    ledger = st.session_state.get("llm_ledger", [])
+    with st.expander(f"💵 AI 用量与每用户成本 · 本会话已调用 {len(ledger)} 次", expanded=bool(ledger)):
+        if not ledger:
+            st.caption("本会话尚未调用大模型。点击「生成研报」或任一快讯的「AI 深度客观解读」后，"
+                       "这里会列出每次调用实际消耗的 token 与按实时单价折算的费用。"
+                       "行情、财报、机构观点等数据接口均为免费公开接口，不计入成本。")
+            return
+        df = pd.DataFrame(ledger)
+        show = pd.DataFrame({
+            "时间": df["time"], "用途": df["purpose"], "服务商": df["provider"], "模型": df["model"],
+            "输入token": df["tok_in"], "输出token": df["tok_out"],
+            "费用(美元)": df["cost"].map(lambda v: f"{v:.5f}" if v is not None else "单价未核实"),
+        })
+        st.dataframe(show, width="stretch", hide_index=True)
+        priced = [c for c in df["cost"] if c is not None]
+        tot_in, tot_out = int(df["tok_in"].sum()), int(df["tok_out"].sum())
+        if priced:
+            st.markdown(
+                f"**本会话合计**：输入 {tot_in:,} token，输出 {tot_out:,} token，"
+                f"费用 **${sum(priced):.5f}**"
+                + ("（其中部分调用单价未核实，未计入）" if len(priced) < len(df) else "") + "。")
+        else:
+            st.markdown(f"**本会话合计**：输入 {tot_in:,} token，输出 {tot_out:,} token；"
+                        "所用模型的单价未能核实，不折算费用。")
+        prices = df.dropna(subset=["price_in"]).drop_duplicates("model")
+        if not prices.empty:
+            st.caption("单价来源：OpenRouter 公开价目接口（openrouter.ai/api/v1/models），"
+                       "每 24 小时刷新。" + "；".join(
+                           f"{r.model} 输入 ${r.price_in:.2f} / 输出 ${r.price_out:.2f} 每百万 token"
+                           for r in prices.itertuples()) + "。")
+
+
+# ===========================================================================
 # 通用安全工具：一切数值提取都必须经过这里，杜绝 NaN / None / 类型异常穿透
 # ===========================================================================
 def sf(val):
@@ -408,6 +520,9 @@ def compute_earnings_surprises(all_data: dict, n: int = 4) -> list:
 #   · 绝对误差  = |H日实际股价 − 目标价| / 目标价
 #   · 未满 H 个交易日的观点一律不计分（避免用未完成的观点凑样本）
 #
+# 价格口径：取 auto_adjust=False 的 Close（只做拆股调整、不做分红调整），
+#   与机构发布目标价时看到的真实股价一致；分红调整价会把老股价压低数个百分点。
+#
 # ⚠️ 拆股陷阱（本项目实测发现并修正的第二个静默失败）：
 #   yfinance 的历史价格是**复权后**的，但 upgrades_downgrades 里的目标价是
 #   机构**当时按未拆股价格发布**的原值。NVDA 2024-06-10 做了 10:1 拆股，
@@ -437,7 +552,11 @@ def fetch_analyst_track_record(ticker: str, horizon: int = ANALYST_TRACK_HORIZON
         return {"ok": False, "reason": "该市场无历史机构观点覆盖"}
 
     try:
-        px = tk.history(period="10y")["Close"]
+        # auto_adjust=False：Close 列只按拆股调整、不按分红调整。
+        # 默认的 auto_adjust=True 还会做分红调整，把历史股价压低
+        # （MSFT 2019-06-03 真实收盘 119.84，默认口径给 112.31，低了 6.3%），
+        # 而机构目标价按真实股价发布，从不含分红调整——会系统性多判"未中"。
+        px = tk.history(period="10y", auto_adjust=False)["Close"]
         splits = tk.splits
     except Exception as e:
         return {"ok": False, "reason": f"历史价格接口调用失败：{type(e).__name__}"}
@@ -2598,18 +2717,10 @@ def get_market_tape_ui(used_key=""):
                     
                     if st.button("🤖 AI 深度客观解读", key=btn_key):
                         if not used_key:
-                            st.warning("⚠️ 请先在上方输入 API 密钥 (智谱清言 或 OpenAI)")
+                            st.warning("⚠️ 请先在上方输入 API 密钥（OpenRouter / OpenAI / 智谱清言）")
                         else:
                             with st.spinner("AI 正在客观分析事件影响与涉及标的..."):
                                 try:
-                                    if used_key.startswith("sk-proj-"):
-                                        base_url = "https://api.openai.com/v1"
-                                        model_name = "gpt-4o-mini"
-                                    else:
-                                        base_url = "https://open.bigmodel.cn/api/paas/v4/"
-                                        model_name = "glm-4-flash"
-                                        
-                                    client = OpenAI(api_key=used_key, base_url=base_url)
                                     prompt = f"""
 请作为一位中立的金融数据分析师，深度且客观地解读以下快讯。
 【核心规则】：
@@ -2624,12 +2735,9 @@ def get_market_tape_ui(used_key=""):
 **2. 涉及板块/标的**：(直接相关的行业板块或股票名称，如：星网锐捷、通信设备)
 **3. 客观影响链条**：(简要分析该事件对产业链上下游或公司基本面的客观影响，不带主观情绪预测)
 """
-                                    response = client.chat.completions.create(
-                                        model=model_name,
-                                        messages=[{"role": "user", "content": prompt}],
-                                        temperature=0.1
-                                    )
-                                    st.session_state[res_key] = response.choices[0].message.content
+                                    st.session_state[res_key] = llm_chat(
+                                        used_key, [{"role": "user", "content": prompt}],
+                                        tier="light", temperature=0.1, purpose="快讯解读")
                                 except Exception as e:
                                     st.error(f"AI 调用失败: {e}")
                     
@@ -4029,8 +4137,10 @@ except Exception as e:
 # 第一层：标的搜索栏 + API Key + 生成按钮（V8 全局渲染顺序重排：置于首屏）
 # -------------------------------------------------------------------
 if "selected_ticker" not in st.session_state:
-    # V10 P8：默认标的改为 A 股核心资产贵州茅台（终端定位 A 股化）
-    st.session_state.selected_ticker = "600519.SS"
+    # 默认打开 NVDA：核心功能「分析师目标价准确度记分卡」的历史机构观点
+    # 只有美股有覆盖（A股/港股在 Yahoo 返回空集），默认茅台会让首屏的核心功能显示为空。
+    # NVDA 同时展示拆股折算的必要性（2024 年 10:1 拆股）。A 股仍可在搜索框直接输入。
+    st.session_state.selected_ticker = "NVDA"
 
 # V10：四栏首屏——搜索框 / API Key / 生成按钮 / 涨跌语义切换
 set_c1, set_c2, set_c3, set_c4 = st.columns([2.8, 1.8, 1.4, 1.5], vertical_alignment="bottom")
@@ -6122,7 +6232,7 @@ if ticker_input:
 # -------------------------------------------------------------------
 if generate_btn:
     if not api_key_input:
-        st.warning("⚠️ 请输入 API 密钥 (智谱清言 ZHIPU_API_KEY 或 OpenAI API Key)")
+        st.warning("⚠️ 请输入 API 密钥（OpenRouter / OpenAI / 智谱清言）")
     elif not all_data or all_data.get('hist_1y') is None:
         st.error("⚠️ 未能成功获取该标的的行情数据（可能是接口限流 Too Many Requests 或代码有误），请稍后重试或更换标的。")
     else:
@@ -6226,21 +6336,14 @@ if generate_btn:
 **输出要求**: 使用规范 Markdown 格式，语言客观克制，禁止使用任何带有引导性/结论性的投资建议措辞。
 """
 
-        base_url = "https://open.bigmodel.cn/api/paas/v4/"
-        if api_key_input.startswith("sk-proj-"):
-            base_url = "https://api.openai.com/v1"
-        client = OpenAI(api_key=api_key_input, base_url=base_url)
-
         try:
-            response = client.chat.completions.create(
-                model="glm-4-flash" if "bigmodel" in base_url else "gpt-4o",
-                messages=[
+            ai_reply = llm_chat(
+                api_key_input,
+                [
                     {"role": "system", "content": "你是严格的客观信息摘要助手，只做事实性转述，绝不生成投资建议、评级或目标价推荐。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-            )
-            ai_reply = response.choices[0].message.content
+                tier="heavy", temperature=0.3, purpose="研报摘要")
             status_box.update(label="✅ **客观数据摘要报告已生成！**", state="complete", expanded=False)
 
         except Exception as e:
@@ -7102,3 +7205,9 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
     st.markdown('<div class="spacer-lg"></div>', unsafe_allow_html=True)
     st.markdown("---")
     st.caption("⚠️ 免责声明：本工具仅做公开数据的客观聚合与可视化展示，所有内容（包括AI生成的摘要文字）均不构成、也不应被理解为投资建议、评级或目标价推荐。投资有风险，请独立判断并自行承担决策后果。\n")
+
+# 每用户成本面板：放在最末尾，才能计入本次运行中刚发生的大模型调用
+try:
+    render_llm_cost_panel()
+except Exception as e:
+    print("[llm_cost_panel ERROR]", repr(e))
