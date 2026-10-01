@@ -14,6 +14,53 @@ from openai import OpenAI
 
 import importlib
 
+# ===========================================================================
+# 自建模块（各文件顶部有完整的模块说明）
+#   market_data.py  个股全量数据与同业估值基准的采集层
+#   scorecard.py    分析师目标价准确度记分卡（核心算法）
+#   llm_cost.py     大模型服务商路由与每用户成本算术
+#   snapshot.py     云端被 Yahoo 限流时改读仓库内的真实数据快照
+# 下面的包装函数只做两件事：加 Streamlit 缓存、在实时数据不可用时换用快照。
+# ===========================================================================
+import market_data
+import scorecard
+import llm_cost
+import snapshot
+from market_data import sf, _median_mean
+from scorecard import ANALYST_TRACK_HORIZON, ANALYST_TRACK_MIN_CALLS, summarize_firm_accuracy
+from llm_cost import _LLM_ROUTES, _PRICE_ID, llm_provider
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_llm_prices() -> dict:
+    return llm_cost.fetch_llm_prices()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_all_data(ticker_input):
+    return snapshot.fallback_all_data(ticker_input, market_data.fetch_all_data(ticker_input))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_industry_benchmark(ticker: str, industry_key: str = "", industry_name: str = "",
+                             is_a_share: bool = False, pure_code: str = ""):
+    if snapshot.forced():
+        return snapshot.load(ticker, "bench")
+    live = market_data.fetch_industry_benchmark(ticker, industry_key, industry_name,
+                                                is_a_share, pure_code)
+    return live or snapshot.load(ticker, "bench")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_analyst_track_record(ticker: str, horizon: int = ANALYST_TRACK_HORIZON):
+    if snapshot.forced() and snapshot.load(ticker, "track"):
+        return snapshot.load(ticker, "track")
+    live = scorecard.fetch_analyst_track_record(ticker, horizon)
+    if live.get("ok"):
+        return live
+    return snapshot.load(ticker, "track") or live
+
+
 st.set_page_config(
     page_title="Anti Stock Report - 智能投研终端",
     layout="wide",
@@ -101,48 +148,6 @@ if not st.session_state.get("intl_color_mode", False):
 # 单价取自 OpenRouter 公开价目接口（无需密钥），取不到即如实标注"单价未核实"，
 # 不写死任何未经核实的价格。
 # ===========================================================================
-_LLM_ROUTES = {
-    "openrouter": dict(label="OpenRouter", base_url="https://openrouter.ai/api/v1",
-                       light="openai/gpt-4o-mini", heavy="openai/gpt-4o"),
-    "openai": dict(label="OpenAI", base_url="https://api.openai.com/v1",
-                   light="gpt-4o-mini", heavy="gpt-4o"),
-    "zhipu": dict(label="智谱 GLM", base_url="https://open.bigmodel.cn/api/paas/v4/",
-                  light="glm-4-flash", heavy="glm-4-flash"),
-}
-# 本地模型名 → OpenRouter 价目表里的 id（用于查单价）
-_PRICE_ID = {"gpt-4o-mini": "openai/gpt-4o-mini", "gpt-4o": "openai/gpt-4o",
-             "openai/gpt-4o-mini": "openai/gpt-4o-mini", "openai/gpt-4o": "openai/gpt-4o"}
-
-
-def llm_provider(api_key: str) -> str:
-    """按密钥前缀判断服务商。智谱密钥形如 32位十六进制.后缀，不以 sk- 开头。"""
-    k = (api_key or "").strip()
-    if k.startswith("sk-or-"):
-        return "openrouter"
-    if k.startswith("sk-"):
-        return "openai"
-    return "zhipu"
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_llm_prices() -> dict:
-    """OpenRouter 公开价目表：{model_id: (输入美元/百万token, 输出美元/百万token)}。
-    取价失败返回空 dict，调用方据此标注"单价未核实"。"""
-    import json as _json
-    import urllib.request as _ur
-    try:
-        with _ur.urlopen("https://openrouter.ai/api/v1/models", timeout=20) as r:
-            data = _json.load(r).get("data", [])
-        out = {}
-        for m in data:
-            p = m.get("pricing") or {}
-            try:
-                out[m["id"]] = (float(p["prompt"]) * 1e6, float(p["completion"]) * 1e6)
-            except (KeyError, TypeError, ValueError):
-                continue
-        return out
-    except Exception:
-        return {}
 
 
 def llm_chat(api_key: str, messages: list, tier: str = "light",
@@ -202,24 +207,6 @@ def render_llm_cost_panel():
                            for r in prices.itertuples()) + "。")
 
 
-# ===========================================================================
-# 通用安全工具：一切数值提取都必须经过这里，杜绝 NaN / None / 类型异常穿透
-# ===========================================================================
-def sf(val):
-    """Safe float：任何不可转换 / NaN / inf 一律返回 None。"""
-    if val is None:
-        return None
-    try:
-        if isinstance(val, (list, tuple, np.ndarray, pd.Series)):
-            if len(val) == 0:
-                return None
-            val = val[0] if not isinstance(val, pd.Series) else val.iloc[0]
-        f = float(val)
-        if math.isnan(f) or math.isinf(f):
-            return None
-        return f
-    except (TypeError, ValueError):
-        return None
 
 
 def _row(df, keys, col_idx=0):
@@ -505,142 +492,6 @@ def compute_earnings_surprises(all_data: dict, n: int = 4) -> list:
     return rows
 
 
-# ===========================================================================
-# 分析师目标价准确度追踪（Analyst Call Accuracy Tracker）
-# ---------------------------------------------------------------------------
-# 本终端的核心主张：不预测，只检验别人预测得准不准。
-#
-# 口径定义（必须显式声明，否则"命中率"是无意义的数字）：
-#   · 样本      = yfinance upgrades_downgrades 中带目标价的历史机构观点
-#   · 评分时点  = 观点发布日 + HORIZON 个交易日（默认 252 ≈ 12 个月，
-#                 对应卖方目标价惯用的 12 个月前瞻期）
-#   · 命中定义  = 终点判定，而非"期间是否触及过"。
-#                 看多观点（目标价 ≥ 发布日股价）：H 日后股价 ≥ 目标价 → 命中
-#                 看空观点（目标价 < 发布日股价）：H 日后股价 ≤ 目标价 → 命中
-#   · 绝对误差  = |H日实际股价 − 目标价| / 目标价
-#   · 未满 H 个交易日的观点一律不计分（避免用未完成的观点凑样本）
-#
-# 价格口径：取 auto_adjust=False 的 Close（只做拆股调整、不做分红调整），
-#   与机构发布目标价时看到的真实股价一致；分红调整价会把老股价压低数个百分点。
-#
-# ⚠️ 拆股陷阱（本项目实测发现并修正的第二个静默失败）：
-#   yfinance 的历史价格是**复权后**的，但 upgrades_downgrades 里的目标价是
-#   机构**当时按未拆股价格发布**的原值。NVDA 2024-06-10 做了 10:1 拆股，
-#   拆股前的目标价是 1100~1350，而同期复权价只有约 106——直接相比会把
-#   拆股前的每一条观点都误判为惨败。实测：不修正时 NVDA 命中率 16.4%、
-#   中位误差 80.6%；按发布日之后的累计拆股比例折算目标价后，回到 73.8% / 46.5%。
-#   对照组 MSFT（2003 年后未拆股）修正前后均为 56.9%，纹丝不动，
-#   证明该修正只作用于真正发生过拆股的标的。
-# ===========================================================================
-ANALYST_TRACK_HORIZON = 252     # 交易日；约 12 个月
-ANALYST_TRACK_MIN_CALLS = 8     # 机构榜单入榜门槛，样本太少的命中率无统计意义
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_analyst_track_record(ticker: str, horizon: int = ANALYST_TRACK_HORIZON):
-    """回测某标的的历史机构目标价命中情况。
-
-    返回 dict(ok=True, calls=DataFrame, ...) 或 dict(ok=False, reason=...)。
-    绝不在数据缺失时返回编造的统计量——reason 会说明到底缺什么。
-    """
-    try:
-        tk = yf.Ticker(ticker)
-        ud = tk.upgrades_downgrades
-    except Exception as e:
-        return {"ok": False, "reason": f"分析师观点接口调用失败：{type(e).__name__}"}
-    if ud is None or not isinstance(ud, pd.DataFrame) or ud.empty:
-        return {"ok": False, "reason": "该市场无历史机构观点覆盖"}
-
-    try:
-        # auto_adjust=False：Close 列只按拆股调整、不按分红调整。
-        # 默认的 auto_adjust=True 还会做分红调整，把历史股价压低
-        # （MSFT 2019-06-03 真实收盘 119.84，默认口径给 112.31，低了 6.3%），
-        # 而机构目标价按真实股价发布，从不含分红调整——会系统性多判"未中"。
-        px = tk.history(period="10y", auto_adjust=False)["Close"]
-        splits = tk.splits
-    except Exception as e:
-        return {"ok": False, "reason": f"历史价格接口调用失败：{type(e).__name__}"}
-    if px is None or px.empty:
-        return {"ok": False, "reason": "历史价格序列为空，无法定位观点发布日股价"}
-
-    px = px.copy()
-    px.index = pd.to_datetime(px.index).tz_localize(None)
-    ud = ud.copy()
-    ud.index = pd.to_datetime(ud.index).tz_localize(None)
-    ud = ud.sort_index()
-    if splits is not None and len(splits):
-        splits = splits.copy()
-        splits.index = pd.to_datetime(splits.index).tz_localize(None)
-
-    if "currentPriceTarget" not in ud.columns:
-        return {"ok": False, "reason": "该标的的机构观点不含目标价字段"}
-    d = ud[ud["currentPriceTarget"].notna() & (ud["currentPriceTarget"] > 0)]
-    if d.empty:
-        return {"ok": False, "reason": "历史机构观点中没有任何带目标价的记录"}
-
-    rows, n_pending = [], 0
-    for dt, r in d.iterrows():
-        prior = px.index[px.index <= dt]
-        if len(prior) == 0:
-            continue
-        dt0 = prior[-1]
-        i = px.index.get_loc(dt0)
-        if i + horizon >= len(px):
-            n_pending += 1          # 观点尚未满 horizon，不计分
-            continue
-        tgt = float(r["currentPriceTarget"])
-        # 折算拆股：把当时发布的原始目标价换算到与复权价同一口径
-        if splits is not None and len(splits) and (splits.index > dt0).any():
-            factor = float(splits[splits.index > dt0].prod())
-            if factor > 0:
-                tgt = tgt / factor
-        p0, pH = float(px.iloc[i]), float(px.iloc[i + horizon])
-        if p0 <= 0 or tgt <= 0:
-            continue
-        bullish = tgt >= p0
-        rows.append({
-            "firm": str(r.get("Firm") or "未署名"),
-            "date": dt0.strftime("%Y-%m-%d"),
-            "price_at_call": p0,
-            "target": tgt,
-            "price_at_horizon": pH,
-            "bullish": bullish,
-            "hit": bool(pH >= tgt) if bullish else bool(pH <= tgt),
-            "abs_err_pct": abs(pH - tgt) / tgt * 100.0,
-        })
-
-    if not rows:
-        return {"ok": False,
-                "reason": f"有 {n_pending} 条观点尚未满 {horizon} 个交易日，暂无可计分样本"}
-    calls = pd.DataFrame(rows)
-    return {
-        "ok": True,
-        "calls": calls,
-        "n_scored": len(calls),
-        "n_pending": n_pending,
-        "n_firms": int(calls["firm"].nunique()),
-        "hit_rate": float(calls["hit"].mean() * 100),
-        "median_abs_err": float(calls["abs_err_pct"].median()),
-        "horizon": horizon,
-        "span": (calls["date"].min(), calls["date"].max()),
-    }
-
-
-def summarize_firm_accuracy(calls: pd.DataFrame, min_calls: int = ANALYST_TRACK_MIN_CALLS):
-    """按机构汇总命中率；样本数低于门槛的机构不进榜（小样本命中率无意义）。"""
-    if calls is None or calls.empty:
-        return pd.DataFrame()
-    g = calls.groupby("firm").agg(
-        样本数=("hit", "size"),
-        命中率=("hit", "mean"),
-        中位绝对误差=("abs_err_pct", "median"),
-    )
-    g = g[g["样本数"] >= min_calls]
-    if g.empty:
-        return g
-    g["命中率"] = (g["命中率"] * 100).round(1)
-    g["中位绝对误差"] = g["中位绝对误差"].round(1)
-    return g.sort_values("命中率", ascending=False)
 
 
 def _resolve_forward_growth(all_data: dict):
@@ -699,163 +550,6 @@ def _resolve_forward_growth(all_data: dict):
 # ===========================================================================
 # 战役一 · 同行业估值基准动态拉取（绝不写死 PE=20x）
 # ===========================================================================
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_industry_benchmark(ticker: str, industry_key: str = "", industry_name: str = "",
-                             is_a_share: bool = False, pure_code: str = "") -> dict | None:
-    """动态计算同行业估值基准（成分股中位数 + 均值）。
-
-    A 股   → akshare 东财行业板块成分股（含动态市盈率/市净率）
-    美/港股 → yfinance Industry.top_companies 成分股逐一取 PE/PB/PS
-
-    返回 dict:
-      {'pe','pb','ps','pe_mean','pb_mean','ps_mean','peer_count','source','peers'}
-    无法获取真实同业数据时返回 None（调用方必须 st.warning 明示缺失，禁止兜底常量）。
-    """
-    if is_a_share:
-        # 主路径：东财申万行业板块全部成分股实时动态 PE/PB
-        res = _benchmark_a_share(industry_name, pure_code)
-        if res:
-            return res
-        # 备用路径：akshare 限流/行业名不匹配时，改用 yfinance 同行业可比公司实时倍数。
-        # 依旧是真实市场数据（仅数据源不同），并在 source 中明确标注供用户判别口径。
-        res = _benchmark_global(ticker, industry_key, industry_name)
-        if res:
-            res["source"] = "备用源 · " + str(res.get("source", "")) + "（东财行业接口不可用）"
-            return res
-        return None
-
-    res = _benchmark_global(ticker, industry_key, industry_name)
-    return res or None
-
-
-
-def _median_mean(series):
-    s = pd.to_numeric(pd.Series(series), errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-    s = s[(s > 0) & (s < 500)]          # 剔除亏损/异常离群值
-    if s.empty:
-        return None, None
-    return sf(s.median()), sf(s.mean())
-
-
-def _benchmark_a_share(industry_name: str, pure_code: str) -> dict | None:
-    """A 股：东财行业板块成分股实时市盈率/市净率中位数。"""
-    try:
-        import akshare as ak
-    except Exception:
-        return None
-
-    board = (industry_name or "").strip()
-    cons = None
-
-    # 1) 直接用 info 里的行业名取成分股
-    for name in [board, board.replace("行业", ""), board.replace("Ⅱ", "")]:
-        if not name:
-            continue
-        try:
-            cons = ak.stock_board_industry_cons_em(symbol=name)
-            if cons is not None and not cons.empty:
-                board = name
-                break
-        except Exception:
-            cons = None
-
-    # 2) 行业名不匹配东财口径时，模糊匹配板块列表
-    if cons is None or cons.empty:
-        try:
-            names = ak.stock_board_industry_name_em()
-            col = next((c for c in names.columns if "名称" in str(c)), names.columns[0])
-            cand = [str(x) for x in names[col].tolist()]
-            hit = next((c for c in cand if board and (c in board or board in c)), None)
-            if hit:
-                cons = ak.stock_board_industry_cons_em(symbol=hit)
-                board = hit
-        except Exception:
-            cons = None
-
-    if cons is None or cons.empty:
-        return None
-
-    try:
-        pe_col = next((c for c in cons.columns if "市盈率" in str(c)), None)
-        pb_col = next((c for c in cons.columns if "市净率" in str(c)), None)
-        mcap_col = next((c for c in cons.columns if "总市值" in str(c)), None)
-        pe_med, pe_mean = _median_mean(cons[pe_col]) if pe_col else (None, None)
-        pb_med, pb_mean = _median_mean(cons[pb_col]) if pb_col else (None, None)
-
-        # PS 无直接字段：用 总市值 / 营业总收入(TTM) 近似需逐股拉财报，成本过高，
-        # 因此这里明确置 None，由 UI 展示"该口径数据缺失"，不做编造。
-        if pe_med is None and pb_med is None:
-            return None
-        return {
-            "pe": pe_med, "pb": pb_med, "ps": None,
-            "pe_mean": pe_mean, "pb_mean": pb_mean, "ps_mean": None,
-            "peer_count": int(len(cons)),
-            "source": f"akshare 东财行业板块「{board}」全部 {len(cons)} 只成分股实时中位数",
-            "peers": cons.head(30),
-        }
-    except Exception:
-        return None
-
-
-def _benchmark_global(ticker: str, industry_key: str, industry_name: str) -> dict | None:
-    """美股/港股：yfinance Industry 成分股逐一取真实 PE/PB/PS 后求中位数。"""
-    try:
-        import yfinance as yf
-    except Exception:
-        return None
-
-    keys = []
-    if industry_key:
-        keys.append(industry_key)
-    if industry_name:
-        keys.append(str(industry_name).lower().replace(" ", "-").replace("—", "-").replace("&", "and"))
-
-    peers_df = None
-    used_key = ""
-    for k in keys:
-        try:
-            ind = yf.Industry(k)
-            tc = ind.top_companies
-            if tc is not None and not tc.empty:
-                peers_df = tc
-                used_key = k
-                break
-        except Exception:
-            continue
-
-    if peers_df is None or peers_df.empty:
-        return None
-
-    symbols = [s for s in list(peers_df.index)[:14] if str(s).upper() != str(ticker).upper()][:10]
-    rows = []
-    for sym in symbols:
-        try:
-            pi = yf.Ticker(sym).info or {}
-            rows.append({
-                "symbol": sym,
-                "name": pi.get("shortName", sym),
-                "PE": sf(pi.get("trailingPE")) or sf(pi.get("forwardPE")),
-                "PB": sf(pi.get("priceToBook")),
-                "PS": sf(pi.get("priceToSalesTrailing12Months")),
-            })
-        except Exception:
-            continue
-
-    if not rows:
-        return None
-    pdf = pd.DataFrame(rows)
-    pe_med, pe_mean = _median_mean(pdf["PE"])
-    pb_med, pb_mean = _median_mean(pdf["PB"])
-    ps_med, ps_mean = _median_mean(pdf["PS"])
-    if pe_med is None and pb_med is None and ps_med is None:
-        return None
-    return {
-        "pe": pe_med, "pb": pb_med, "ps": ps_med,
-        "pe_mean": pe_mean, "pb_mean": pb_mean, "ps_mean": ps_mean,
-        "peer_count": int(len(pdf)),
-        "source": f"yfinance 行业「{used_key}」头部 {len(pdf)} 家可比公司实时倍数中位数",
-        "peers": pdf,
-    }
 
 
 # ===========================================================================
@@ -1472,10 +1166,13 @@ def card_html(label, value, sub="", direction="neutral", value_direction=None,
             f'<div class="tcard-value {v_cls}">{value}</div>{sub_html}{pct_html}</div>')
 
 
-def render_kpi_grid(cards, cols=4):
-    """cards: list[dict(label,value,sub,direction,value_direction,percentile)]"""
+def render_kpi_grid(cards, cols=4, fill_height=None):
+    """cards: list[dict(label,value,sub,direction,value_direction,percentile)]
+    fill_height：给定像素高度时卡片按行均分拉伸，用于与旁边图表上下沿对齐。"""
     inner = "".join(card_html(**c) for c in cards)
-    st.html(f'<div class="tg tg-{cols}">{inner}</div>')
+    style = (f' style="height:{fill_height}px; grid-auto-rows:1fr; margin:0;"'
+             if fill_height else "")
+    st.html(f'<div class="tg tg-{cols}"{style}>{inner}</div>')
 
 
 def section_bar(title, note=""):
@@ -1918,7 +1615,9 @@ def fetch_national_team_etfs():
         if current_price is None or pd.isna(current_price) or current_price == 0:
             try:
                 t = yf.Ticker(tk)
-                hist = t.history(period='5d')
+                # 节假日 / 停牌日 Yahoo 会返回收盘价为空的当日行，必须先剔除，
+                # 否则取到 NaN，整张 ETF 表被判为无数据（2026-10-01 国庆休市时实际发生）
+                hist = t.history(period='10d').dropna(subset=['Close'])
                 if len(hist) >= 1:
                     current_price = float(hist['Close'].iloc[-1])
                     if len(hist) >= 2:
@@ -2128,102 +1827,6 @@ def render_macro_capital_board():
         else:
             st.warning("暂无 ETF 数据")
             
-        # P6: 新增：过往 30 天主力资金净流入/流出趋势图
-        st.markdown("---")
-        st.markdown("### 📊 核心宽基 ETF 近 30 日主力资金流向趋势")
-        st.caption("基于每日成交额与价格涨跌幅权重估算的主力资金流入/流出趋势。")
-        
-        etf_choice = st.selectbox("选择要查看趋势的 ETF", ["510300.SS (华泰柏瑞沪深300 ETF)", "588000.SS (华夏科创50 ETF)"])
-        etf_tk = etf_choice.split(" ")[0]
-        
-        try:
-            # P1: 强防时间倒退 Bug - 明确限制起止日期并提供 fallback 数据获取机制
-            t_etf = yf.Ticker(etf_tk)
-            end_date_trend = datetime.datetime.now()
-            start_date_trend = end_date_trend - datetime.timedelta(days=45)
-            
-            # 优先使用 start/end 精准范围拉取 yfinance 数据
-            hist_etf = t_etf.history(start=start_date_trend.strftime('%Y-%m-%d'), end=end_date_trend.strftime('%Y-%m-%d'))
-            
-            # 立即校验最后一条数据的年份，防严重滞后或滞留旧数据
-            if not hist_etf.empty:
-                last_year = pd.to_datetime(hist_etf.index[-1]).year
-                if last_year < 2026:
-                    hist_etf = pd.DataFrame()
-            
-            # 校验：若返回空或索引数据不合理，则降级到更稳定的 A股 ETF 接口
-            if hist_etf.empty:
-                try:
-                    df_ak = ak.fund_etf_hist_em(
-                        symbol=etf_tk.split('.')[0],
-                        period="daily",
-                        start_date=start_date_trend.strftime('%Y%m%d'),
-                        end_date=end_date_trend.strftime('%Y%m%d'),
-                        adjust="qfq"
-                    )
-                    if df_ak is not None and not df_ak.empty:
-                        df_ak['Date'] = pd.to_datetime(df_ak['日期'])
-                        df_ak.set_index('Date', inplace=True)
-                        hist_etf = pd.DataFrame({
-                            'Close': df_ak['收盘'].astype(float),
-                            'Volume': df_ak['成交量'].astype(float)
-                        })
-                        
-                        # 再次校验最后一条数据的年份
-                        if not hist_etf.empty:
-                            last_year = pd.to_datetime(hist_etf.index[-1]).year
-                            if last_year < 2026:
-                                hist_etf = pd.DataFrame()
-                except Exception:
-                    hist_etf = pd.DataFrame()
-            
-            # 终极数据隔离校验：强制只保留 2026 年以后的今日有效数据，彻底隔离 2008 历史倒退数据
-            if not hist_etf.empty:
-                hist_etf.index = pd.to_datetime(hist_etf.index).tz_localize(None)
-                cutoff_date = datetime.datetime(2026, 1, 1)
-                hist_etf = hist_etf[hist_etf.index >= cutoff_date]
-
-            if not hist_etf.empty and len(hist_etf) >= 2:
-                hist_etf['Prev_Close'] = hist_etf['Close'].shift(1)
-                hist_etf['chg_pct'] = (hist_etf['Close'] - hist_etf['Prev_Close']) / hist_etf['Prev_Close']
-                hist_etf['turnover'] = hist_etf['Close'] * hist_etf['Volume'] / 1e8
-                
-                # 资金流向粗略估算算法
-                hist_etf['net_flow'] = hist_etf['turnover'] * hist_etf['chg_pct'] * 4.0
-                hist_etf['net_flow'] = hist_etf.apply(lambda r: np.clip(r['net_flow'], -0.2 * r['turnover'], 0.2 * r['turnover']), axis=1)
-                hist_etf = hist_etf.dropna().tail(30)
-                
-                df_trend = pd.DataFrame({
-                    '日期': [d.strftime('%Y-%m-%d') for d in hist_etf.index],
-                    '净流入(亿元)': hist_etf['net_flow'].values
-                })
-                
-                # 水平线上方红色，水平线下方绿色
-                colors_trend = ['#ef4444' if val >= 0 else '#00b865' for val in df_trend['净流入(亿元)']]
-                
-                fig_trend = go.Figure(go.Bar(
-                    x=df_trend['日期'],
-                    y=df_trend['净流入(亿元)'],
-                    marker_color=colors_trend,
-                    name="估算主力净流入"
-                ))
-                
-                fig_trend.update_layout(
-                    height=280,
-                    margin=dict(l=10, r=10, t=30, b=10),
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    template='plotly_dark',
-                    xaxis=dict(gridcolor='rgba(255,255,255,0.05)', type='category'),
-                    yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title="净额 (亿元)")
-                )
-                
-                st.plotly_chart(apply_institutional_axes(fig_trend), width="stretch", key=f"flow_trend_{etf_tk}")
-            else:
-                st.info("暂无足够的历史日线数据来估算资金流趋势。")
-        except Exception as e:
-            st.info(f"资金流量趋势计算暂缓: {e}")
-
         st.markdown("---")
         st.markdown("### 🗺️ 全市场行业主力资金净流入热力图 (Treemap)")
         st.caption("方块大小代表资金活跃度(净额绝对值)，红色代表净流入，绿色代表净流出。点击可下钻或悬停查看详情。")
@@ -2815,8 +2418,6 @@ def get_crowdsource_ui(api_key, ticker, all_data=None):
             total_liab = info.get('totalLiabilities', 0) or 0
             if total_assets > total_liab:
                 def_net_assets = (total_assets - total_liab) / 1e8
-            elif mcap:
-                def_net_assets = mcap / 1e8 / 3.0
 
     # 重置/更新 session_state，防止继承上一标的的财务数值
     if st.session_state.get("last_calc_ticker") != ticker:
@@ -2870,39 +2471,24 @@ def get_crowdsource_ui(api_key, ticker, all_data=None):
                    + (f"：{bench_err}" if bench_err else "") +
                    "），缺失口径的推演结果留空。")
 
-        # 布局：左侧输入预测财务指标，右侧展示水位差卡片
-    # V10 P9：左文右图垂直居中对齐，消除两侧视觉高低差
-    calc_c1, calc_c2 = st.columns([1, 1.2], vertical_alignment="center")
-    
-    with calc_c1:
-        st.write("#### 1. 预测财务指标")
-        
-        # V10 P1：全站唯一全局搜索框（页面顶部），此处不再放第二个标的输入框；
-        # 众包计算器直接跟随全局 selected_ticker，避免重复输入与状态互相覆盖。
-        st.caption("🎯 当前预测标的跟随顶部全局搜索框，切换标的请在上方输入")
-            
-        # V8 修复：key 已在 session_state 设初值（上方换股重置块）的控件不能再
-        # 传 value=，否则 Streamlit 抛 StreamlitAPIException，整个众包区中断。
-        # 初值一律走 session_state.setdefault，控件本身不传默认值。
-        for _k, _v in [("calc_pred_rev", float(def_rev) if def_rev > 0 else 100.0),
-                       ("calc_pred_net_inc", float(def_net_inc) if def_net_inc > 0 else 15.0),
-                       ("calc_pred_net_assets", float(def_net_assets) if def_net_assets > 0 else 60.0)]:
-            st.session_state.setdefault(_k, _v)
-        pred_rev = st.number_input(f"预测营业收入 ({unit_lbl})", min_value=0.0, step=10.0, key="calc_pred_rev")
-        pred_net_inc = st.number_input(f"预测净利润 ({unit_lbl})", min_value=0.0, step=2.0, key="calc_pred_net_inc")
-        pred_net_assets = st.number_input(f"预测净资产 ({unit_lbl})", min_value=0.0, step=5.0, key="calc_pred_net_assets")
-        
-    with calc_c2:
-        st.write("#### 📊 估值水位差 (Gap Analysis)")
-        
-        # 渲染差异卡片的 CSS 样式 (顶格左对齐，防止 raw text 解析)
-        st.markdown("""<style>
+    # 布局：三行，每行左边是一项财务预测输入，右边是它直接驱动的估值倍数水位差
+    # （营收↔PS、净利润↔PE、净资产↔PB）。旧版左右各自成列，两列内容高度不同，
+    # 上下沿总有十几像素错位；逐行配对后每一行天然对齐，也让输入与倍数的对应关系一目了然。
+    hdr1, hdr2 = st.columns([1, 1.2], vertical_alignment="bottom")
+    with hdr1:
+        st.markdown("#### 1. 预测财务指标")
+    with hdr2:
+        st.markdown("#### 📊 估值水位差 (Gap Analysis)")
+    st.caption("🎯 当前预测标的跟随顶部全局搜索框，切换标的请在上方输入")
+
+    st.markdown("""<style>
 .gap-analysis-container {
     display: flex;
     flex-direction: column;
     gap: 10px;
     margin-top: 5px;
 }
+.gap-card { min-height: 92px; display: flex; flex-direction: column; justify-content: center; }
 .gap-card {
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -2922,38 +2508,52 @@ def get_crowdsource_ui(api_key, ticker, all_data=None):
 }
 </style>""", unsafe_allow_html=True)
 
-        # 估值差计算与渲染
-        def get_gap_card_html(label, curr_val, ref_val, missing):
-            def_lbl = (" <span style='font-size:0.68rem; color:#8B93A7;'>(同业数据缺失)</span>"
-                       if missing else " <span style='font-size:0.68rem; color:#00E676;'>(同业实时中位数)</span>")
-            if ref_val is None or curr_val is None or pd.isna(curr_val) or curr_val <= 0:
-                ref_txt = f"<b>{ref_val:.2f}x</b>" if isinstance(ref_val, (int, float)) else "数据缺失"
-                cur_txt = f"<b>{curr_val:.2f}x</b>" if isinstance(curr_val, (int, float)) and curr_val > 0 else "数据缺失"
-                return f"""<div class="gap-card">
-    <div class="gap-title">{label}{def_lbl}</div>
-    <div class="gap-vals">当前实际: {cur_txt} | 同业中位: {ref_txt}</div>
-    <div style="color: #8B93A7; font-weight: 600; font-size: 0.85rem; margin-top: 4px;">水位差: 无法计算</div>
-</div>"""
-
-            gap_pct = ((curr_val - ref_val) / ref_val) * 100
-            # 语义化色彩：高估 → Crimson Red；低估 → Neon Green
-            status_color = "#FF4B4B" if gap_pct >= 0 else "#00E676"
-            status_lbl = f"溢价 {gap_pct:+.1f}%" if gap_pct >= 0 else f"折价 {gap_pct:+.1f}%"
+    # 估值差计算与渲染
+    def get_gap_card_html(label, curr_val, ref_val, missing):
+        def_lbl = (" <span style='font-size:0.68rem; color:#8B93A7;'>(同业数据缺失)</span>"
+                   if missing else " <span style='font-size:0.68rem; color:#00E676;'>(同业实时中位数)</span>")
+        if ref_val is None or curr_val is None or pd.isna(curr_val) or curr_val <= 0:
+            ref_txt = f"<b>{ref_val:.2f}x</b>" if isinstance(ref_val, (int, float)) else "数据缺失"
+            cur_txt = f"<b>{curr_val:.2f}x</b>" if isinstance(curr_val, (int, float)) and curr_val > 0 else "数据缺失"
             return f"""<div class="gap-card">
-    <div class="gap-title">{label}{def_lbl}</div>
-    <div class="gap-vals">当前实际: <b>{curr_val:.1f}x</b> | 行业平均: <b>{ref_val:.1f}x</b></div>
-    <div style="color: {status_color}; font-weight: bold; font-size: 0.88rem; margin-top: 4px;">水位差: {status_lbl}</div>
+<div class="gap-title">{label}{def_lbl}</div>
+<div class="gap-vals">当前实际: {cur_txt} | 同业中位: {ref_txt}</div>
+<div style="color: #8B93A7; font-weight: 600; font-size: 0.85rem; margin-top: 4px;">水位差: 无法计算</div>
 </div>"""
 
-        gap_html_pe = get_gap_card_html("PE 估值水位", curr_pe, ref_pe, ref_pe is None)
-        gap_html_pb = get_gap_card_html("PB 估值水位", curr_pb, ref_pb, ref_pb is None)
-        gap_html_ps = get_gap_card_html("PS 估值水位", curr_ps, ref_ps, ref_ps is None)
-        
-        st.markdown(f"""<div class="gap-analysis-container">
-    {gap_html_pe}
-    {gap_html_pb}
-    {gap_html_ps}
-</div>""", unsafe_allow_html=True)
+        gap_pct = ((curr_val - ref_val) / ref_val) * 100
+        # 语义化色彩：高估 → Crimson Red；低估 → Neon Green
+        status_color = "#FF4B4B" if gap_pct >= 0 else "#00E676"
+        status_lbl = f"溢价 {gap_pct:+.1f}%" if gap_pct >= 0 else f"折价 {gap_pct:+.1f}%"
+        return f"""<div class="gap-card">
+<div class="gap-title">{label}{def_lbl}</div>
+<div class="gap-vals">当前实际: <b>{curr_val:.1f}x</b> | 行业平均: <b>{ref_val:.1f}x</b></div>
+<div style="color: {status_color}; font-weight: bold; font-size: 0.88rem; margin-top: 4px;">水位差: {status_lbl}</div>
+</div>"""
+
+
+    # V8 修复：key 已在 session_state 设初值（上方换股重置块）的控件不能再
+    # 传 value=，否则 Streamlit 抛 StreamlitAPIException，整个众包区中断。
+    for _k, _v in [("calc_pred_rev", float(def_rev) if def_rev > 0 else 100.0),
+                   ("calc_pred_net_inc", float(def_net_inc) if def_net_inc > 0 else 15.0),
+                   ("calc_pred_net_assets", float(def_net_assets) if def_net_assets > 0 else 60.0)]:
+        st.session_state.setdefault(_k, _v)
+
+    _rows = [
+        (f"预测营业收入 ({unit_lbl})", "calc_pred_rev", 10.0, "PS 估值水位", curr_ps, ref_ps),
+        (f"预测净利润 ({unit_lbl})", "calc_pred_net_inc", 2.0, "PE 估值水位", curr_pe, ref_pe),
+        (f"预测净资产 ({unit_lbl})", "calc_pred_net_assets", 5.0, "PB 估值水位", curr_pb, ref_pb),
+    ]
+    _vals = {}
+    for _lbl, _key, _step, _gap_lbl, _cur, _ref in _rows:
+        r1, r2 = st.columns([1, 1.2], vertical_alignment="center")
+        with r1:
+            _vals[_key] = st.number_input(_lbl, min_value=0.0, step=_step, key=_key)
+        with r2:
+            st.markdown(get_gap_card_html(_gap_lbl, _cur, _ref, _ref is None), unsafe_allow_html=True)
+    pred_rev = _vals["calc_pred_rev"]
+    pred_net_inc = _vals["calc_pred_net_inc"]
+    pred_net_assets = _vals["calc_pred_net_assets"]
         
     # 全自动相对估值计算（同业基准缺失的口径直接判定为不可推演，置 0 并在 UI 明示）
     pe_price = (pred_net_inc * ref_pe) / shares_in_100m if (ref_pe and shares_in_100m > 0 and pred_net_inc > 0) else 0.0
@@ -3334,7 +2934,7 @@ document.addEventListener('keydown', function(e) {
     /* V10 P7：固定 5 列网格 × 10 张卡 = 完美双排满格 */
     .financial-grid {
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         gap: 15px;
         margin-top: 15px;
         margin-bottom: 20px;
@@ -4195,6 +3795,7 @@ def fetch_riskfree_rate():
                 return dict(date=str(row["日期"]), cn10=float(row["中国国债收益率10年"]),
                             cn10_prev=(float(prev["中国国债收益率10年"]) if prev is not None else None),
                             us10=us10, us10_date=us10_date, us10_cn=us10_cn,
+                            cn10_hist=[float(x) for x in d["中国国债收益率10年"].tail(5)],
                             source="东方财富·中美国债收益率序列")
     except Exception:
         pass
@@ -4222,7 +3823,8 @@ def fetch_riskfree_rate():
 # ---------------------------------------------------------------------------
 # 数据源经逐一实测确认（2026-09）：
 #   CL=F / GC=F / ^TNX / CNY=X  → 有完整日线序列，可算涨跌幅与迷你趋势线
-#   XIN9.FGI（富时中国A50）     → 仅返回单点现价，无历史序列
+#   XIN9.FGI（富时中国A50）     → 仅返回单点现价，无历史序列，永久取不到涨跌与走势，
+#                                  故 2026-10 起从矩阵中移除
 #   CNH=X（离岸人民币）          → 同样仅单点，故改用 CNY=X 并如实标注为在岸口径
 # akshare 的 futures_foreign_commodity_realtime 当前版本抛
 # "Length mismatch" 内部错误，不可用；故商品口径统一走 yfinance。
@@ -4233,7 +3835,6 @@ _CROSS_ASSETS = [
     ("COMEX 黄金",     "GC=F",      "COMEX · 美元/盎司",    2),
     ("美债 10Y",       "^TNX",      "US Treasury · %",      3),
     ("美元/人民币",     "CNY=X",     "在岸中间价口径",        4),
-    ("富时中国 A50",   "XIN9.FGI",  "SGX 期货 · 点",        2),
 ]
 
 
@@ -4271,7 +3872,7 @@ def fetch_cross_asset_matrix(n_days: int = 5):
                 name="中债 10Y", ticker="CGB10Y", sub=f"{_rf.get('source','')} · %", dp=4,
                 last=float(_rf["cn10"]),
                 chg_pct=(float((_rf["cn10"] / _prev - 1) * 100) if _prev else None),
-                spark=[]))
+                spark=list(_rf.get("cn10_hist") or [])))
     except Exception:
         pass
     return rows
@@ -4334,8 +3935,7 @@ def render_cross_asset_matrix():
         '<table class="bb-matrix"><thead><tr>'
         '<th>Asset</th><th>Last</th><th>Chg %</th><th style="text-align:right;">5D Trend</th>'
         '</tr></thead><tbody>' + body + '</tbody></table></div>')
-    st.caption("数据源：yfinance（CL=F / GC=F / ^TNX / CNY=X / XIN9.FGI）与东方财富中美国债序列。"
-               "标注「历史缺失」者为该接口仅返回当前报价、无日线序列。")
+    st.caption("数据源：yfinance（CL=F / GC=F / ^TNX / CNY=X）与东方财富中美国债序列。")
 
 
 # --- 4.1 全球市场主线 ---
@@ -4693,24 +4293,23 @@ def render_rates_monitor():
     if cv:
         st.markdown('<div class="spacer-sm"></div>', unsafe_allow_html=True)
         st.markdown("#### 📐 中债国债收益率曲线（今日 vs 前一交易日）")
-        c1, c2 = st.columns([1.6, 1], vertical_alignment="center")
-        with c1:
-            tenors = ["3月", "6月", "1年", "3年", "5年", "7年", "10年", "30年"]
-            fig_c = go.Figure()
-            fig_c.add_trace(go.Scatter(x=tenors, y=[cv["today"].get(t) for t in tenors],
-                                       name=f"今日 {cv['today_date']}", mode="lines+markers",
-                                       line=dict(color=C_ACCENT, width=2.2), marker=dict(size=6)))
-            fig_c.add_trace(go.Scatter(x=tenors, y=[cv["prev"].get(t) for t in tenors],
-                                       name=f"前一日 {cv['prev_date']}", mode="lines+markers",
-                                       line=dict(color="#8B93A7", width=1.6, dash="dash"), marker=dict(size=5)))
-            fig_c.update_layout(height=300, template="plotly_dark",
-                                margin=dict(l=40, r=20, t=30, b=20),
-                                paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
-                                legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5, font=dict(size=9)),
-                                yaxis=dict(title="收益率 (%)", title_font=dict(size=9), gridcolor="rgba(255,255,255,0.05)"))
-            st.plotly_chart(apply_institutional_axes(fig_c), width="stretch", config={"displayModeBar": False})
-        with c2:
-            st.markdown(f'<div class="ana-note">📐 {_curve_analysis(cv)}</div>', unsafe_allow_html=True)
+        # 说明文字放在图下方（与上方 Shibor 板块一致）。旧版左图右文并垂直居中，
+        # 右侧短文字悬在中间，与图的上下沿各差约 100px。
+        tenors = ["3月", "6月", "1年", "3年", "5年", "7年", "10年", "30年"]
+        fig_c = go.Figure()
+        fig_c.add_trace(go.Scatter(x=tenors, y=[cv["today"].get(t) for t in tenors],
+                                   name=f"今日 {cv['today_date']}", mode="lines+markers",
+                                   line=dict(color=C_ACCENT, width=2.2), marker=dict(size=6)))
+        fig_c.add_trace(go.Scatter(x=tenors, y=[cv["prev"].get(t) for t in tenors],
+                                   name=f"前一日 {cv['prev_date']}", mode="lines+markers",
+                                   line=dict(color="#8B93A7", width=1.6, dash="dash"), marker=dict(size=5)))
+        fig_c.update_layout(height=300, template="plotly_dark",
+                            margin=dict(l=40, r=20, t=30, b=20),
+                            paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
+                            legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5, font=dict(size=9)),
+                            yaxis=dict(title="收益率 (%)", title_font=dict(size=9), gridcolor="rgba(255,255,255,0.05)"))
+        st.plotly_chart(apply_institutional_axes(fig_c), width="stretch", config={"displayModeBar": False})
+        st.markdown(f'<div class="ana-note">📐 {_curve_analysis(cv)}</div>', unsafe_allow_html=True)
 
     # ===== V12 新增：人民币汇率走势（货币的对外价格）=====
     if fx and fx.get("hist") is not None and not fx["hist"].empty:
@@ -4906,7 +4505,9 @@ def render_macro_calendar():
     st.caption("对标华尔街见闻/金十数据的事件驱动视角：左栏选择事件，右栏查看客观数据与影响链条。仅客观聚合，不构成任何投资建议。")
 
     cal_c1, cal_c2 = st.columns([1, 2], vertical_alignment="top")
-    with cal_c1:
+    # 两栏放进等高边框：旧版左侧事件列表比右侧详情长约 213px，下沿错开
+    MCAL_H = 520
+    with cal_c1, st.container(border=True, height=MCAL_H):
         st.markdown('<div class="mcal-col-title">📌 重点事件 · 上一交易日回顾 + 未来排期</div>', unsafe_allow_html=True)
 
         # V12：默认选中影响力最高的事件（首个一级数据），而非固定的第 0 条。
@@ -4949,7 +4550,7 @@ def render_macro_calendar():
         src_note = evs[0].get("source", "") if evs else ""
         st.caption(f"数据来源：{src_note}" if src_note else "暂无事件数据")
 
-    with cal_c2:
+    with cal_c2, st.container(border=True, height=MCAL_H):
         # V10.3 P6：右栏加与左栏同规格的小标题，两栏首行对齐（右栏详情卡随之下移，
         # 上沿与左侧第一个事件按钮的上沿水平对齐）
         st.markdown('<div class="mcal-col-title">🔍 事件详情 · 客观影响解读</div>', unsafe_allow_html=True)
@@ -5151,6 +4752,9 @@ def render_analyst_accuracy(ticker: str, currency: str = ""):
                 f"（Yahoo 的历史机构观点目前仅覆盖美股，A股/港股暂无数据。）")
         return
 
+    if rec.get("_snapshot_date"):
+        st.caption(f"🗂️ 实时接口限流，记分卡使用 {rec['_snapshot_date']} 构建的数据快照。")
+
     calls = rec["calls"]
     hit, err = rec["hit_rate"], rec["median_abs_err"]
     hit_col = C_UP if hit >= 50 else C_DOWN
@@ -5177,7 +4781,9 @@ def render_analyst_accuracy(ticker: str, currency: str = ""):
         '</div></div>')
 
     acc_l, acc_r = st.columns([1.15, 1], vertical_alignment="top")
-    with acc_l:
+    # 两张表放进等高边框；机构榜表格高度固定为填满边框，避免与右表下沿错开
+    ACC_H = 600
+    with acc_l, st.container(border=True, height=ACC_H):
         st.markdown("**机构命中率榜**　<span class='bb-label-mute'>样本 ≥ "
                     f"{ANALYST_TRACK_MIN_CALLS} 条方可入榜</span>", unsafe_allow_html=True)
         firm = summarize_firm_accuracy(calls)
@@ -5185,8 +4791,8 @@ def render_analyst_accuracy(ticker: str, currency: str = ""):
             st.info(f"暂无机构达到 {ANALYST_TRACK_MIN_CALLS} 条的入榜样本量。"
                     "样本过少的命中率不具统计意义，故不展示。")
         else:
-            st.dataframe(firm.head(12), width="stretch")
-    with acc_r:
+            st.dataframe(firm.head(12), width="stretch", height=ACC_H - 70)
+    with acc_r, st.container(border=True, height=ACC_H):
         st.markdown("**最近 8 条已计分观点**", unsafe_allow_html=True)
         recent = calls.sort_values("date", ascending=False).head(8)
         rows_html = "".join(
@@ -5210,242 +4816,6 @@ def render_analyst_accuracy(ticker: str, currency: str = ""):
         f"本记分卡仅陈述历史兑现情况，不构成任何投资建议。")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_all_data(ticker_input):
-    """全量数据采集引擎：yfinance + akshare 双源汇聚与自动降级补全"""
-    data = {}
-    stock = yf.Ticker(ticker_input)
-    # ⚠️ 稳定性修复：stock.info 在接口限流(Too Many Requests)时会直接抛异常，
-    # 之前未做 try/except 会导致整页崩溃。这里加入重试 + 兜底，绝不让异常向上传播。
-    data['info'] = {}
-    for attempt in range(3):
-        try:
-            data['info'] = stock.info or {}
-            if data['info'].get('shortName') or data['info'].get('currentPrice'):
-                break
-        except Exception:
-            if attempt < 2:
-                time.sleep(1.5)
-            else:
-                data['info'] = {}
-
-    # ⚠️ 关键修复：当 stock.info 被限流返回空字典时，使用 fast_info 填充核心指标
-    if not data['info'].get('currentPrice') and not data['info'].get('trailingPE'):
-        try:
-            fi = stock.fast_info
-            if fi is not None:
-                if not data['info'].get('currentPrice'):
-                    data['info']['currentPrice'] = getattr(fi, 'last_price', None)
-                    data['info']['regularMarketPrice'] = getattr(fi, 'last_price', None)
-                if not data['info'].get('previousClose'):
-                    data['info']['previousClose'] = getattr(fi, 'previous_close', None)
-                if not data['info'].get('marketCap'):
-                    data['info']['marketCap'] = getattr(fi, 'market_cap', None)
-                if not data['info'].get('fiftyTwoWeekHigh'):
-                    data['info']['fiftyTwoWeekHigh'] = getattr(fi, 'year_high', None)
-                if not data['info'].get('fiftyTwoWeekLow'):
-                    data['info']['fiftyTwoWeekLow'] = getattr(fi, 'year_low', None)
-                if not data['info'].get('currency'):
-                    data['info']['currency'] = getattr(fi, 'currency', 'USD')
-        except Exception:
-            pass
-
-    try:
-        data['hist_1y'] = stock.history(period="1y").dropna(subset=['Close'])
-    except Exception:
-        data['hist_1y'] = pd.DataFrame()
-
-    try:
-        data['news'] = stock.news or []
-    except Exception:
-        data['news'] = []
-
-    try:
-        data['recommendations'] = stock.recommendations
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['recommendations'] = pd.DataFrame()
-    try:
-        data['analyst_targets'] = stock.analyst_price_targets
-    except Exception:
-        data['analyst_targets'] = {}
-    try:
-        data['earnings_dates'] = stock.earnings_dates
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['earnings_dates'] = pd.DataFrame()
-    try:
-        data['institutional_holders'] = stock.institutional_holders
-        # P6 Fallback strategies
-        if data['institutional_holders'] is None or data['institutional_holders'].empty:
-            data['institutional_holders'] = stock.major_holders
-        if data['institutional_holders'] is None or data['institutional_holders'].empty:
-            data['institutional_holders'] = stock.mutualfund_holders
-    except Exception:
-        data['institutional_holders'] = pd.DataFrame()
-    try:
-        data['quarterly_financials'] = stock.quarterly_financials
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['quarterly_financials'] = pd.DataFrame()
-
-    # 获取季度利润表（用于美股/港股业务分部收入展示）
-    try:
-        data['quarterly_income_stmt'] = stock.quarterly_income_stmt
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['quarterly_income_stmt'] = pd.DataFrame()
-
-    # 获取年度利润表（同上，更完整的收入分部数据）
-    try:
-        data['income_stmt'] = stock.income_stmt
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['income_stmt'] = pd.DataFrame()
-
-    # P7: 获取季度与年度现金流量表
-    try:
-        data['quarterly_cashflow'] = stock.quarterly_cashflow
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['quarterly_cashflow'] = pd.DataFrame()
-    try:
-        data['cashflow'] = stock.cashflow
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['cashflow'] = pd.DataFrame()
-
-    # P7: 获取季度与年度资产负债表
-    try:
-        data['quarterly_balance_sheet'] = stock.quarterly_balance_sheet
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['quarterly_balance_sheet'] = pd.DataFrame()
-    try:
-        data['balance_sheet'] = stock.balance_sheet
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['balance_sheet'] = pd.DataFrame()
-
-    # V7 战役二：PEG 所需的「未来 EPS 一致预期增速」真实数据源（绝不使用假设增速）
-    try:
-        data['growth_estimates'] = stock.growth_estimates
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['growth_estimates'] = pd.DataFrame()
-    try:
-        data['earnings_estimate'] = stock.earnings_estimate
-    except Exception:
-        # V8 战役一：失败返回空 DataFrame（而非 None），避免下游 .empty/.get 二次崩溃
-        data['earnings_estimate'] = pd.DataFrame()
-
-    # 获取公司业务概要（longBusinessSummary）
-    if not data['info'].get('longBusinessSummary'):
-        try:
-            # 单独再试一次获取 info 中的业务描述
-            bs = stock.info.get('longBusinessSummary', '')
-            if bs:
-                data['info']['longBusinessSummary'] = bs
-        except Exception:
-            pass
-
-    pure_code = ticker_input.replace('.SS', '').replace('.SZ', '')
-    is_a_share = ticker_input.endswith('.SS') or ticker_input.endswith('.SZ') or pure_code.isdigit()
-    data['is_a_share'] = is_a_share
-    data['pure_code'] = pure_code
-
-    # 当 yfinance 缺失 A 股关键行情或报错时，自动使用 akshare / 东方财富双源补全
-    if is_a_share or not data['info'].get('currentPrice'):
-        try:
-            import akshare as ak
-            df_info = ak.stock_individual_info_em(symbol=pure_code)
-            if df_info is not None and not df_info.empty:
-                info_dict = dict(zip(df_info['item'], df_info['value']))
-                name = info_dict.get('股票简称') or info_dict.get('股票名称')
-                if name and not data['info'].get('shortName'):
-                    data['info']['shortName'] = name
-                ind = info_dict.get('行业')
-                if ind and not data['info'].get('industry'):
-                    data['info']['industry'] = ind
-                    data['info']['sector'] = ind
-                mcap = info_dict.get('总市值')
-                if mcap:
-                    try: data['info']['marketCap'] = float(mcap)
-                    except: pass
-                pe_val = info_dict.get('市盈率(动)') or info_dict.get('市盈率(静)')
-                if pe_val:
-                    try: data['info']['trailingPE'] = float(pe_val)
-                    except: pass
-        except Exception:
-            pass
-
-        # 补全 K 线与最新收盘价
-        if data['hist_1y'].empty:
-            try:
-                import akshare as ak
-                df_k = ak.stock_zh_a_hist(symbol=pure_code, period="daily", adjust="qfq")
-                if df_k is not None and not df_k.empty:
-                    df_k['Date'] = pd.to_datetime(df_k['日期'])
-                    df_k.set_index('Date', inplace=True)
-                    df_k.rename(columns={'开盘': 'Open', '最高': 'High', '最低': 'Low', '收盘': 'Close', '成交量': 'Volume'}, inplace=True)
-                    data['hist_1y'] = df_k[['Open', 'High', 'Low', 'Close', 'Volume']].tail(250)
-            except Exception:
-                pass
-
-        if not data['hist_1y'].empty and not data['info'].get('currentPrice'):
-            last_p = round(float(data['hist_1y']['Close'].iloc[-1]), 2)
-            data['info']['currentPrice'] = last_p
-            data['info']['regularMarketPrice'] = last_p
-            data['info']['currency'] = 'CNY'
-
-    # A股主营业务构成（akshare 真实数据）：用于地区/产品线客观展示，无数据则留空不编造
-    data['main_composition'] = None
-    if is_a_share:
-        try:
-            import akshare as ak
-            data['ak_news'] = ak.stock_news_em(symbol=pure_code)
-        except Exception:
-            data['ak_news'] = None
-        try:
-            import akshare as ak
-            data['ak_forecast'] = ak.stock_profit_forecast_em(symbol=pure_code)
-        except Exception:
-            data['ak_forecast'] = None
-        try:
-            import akshare as ak
-            data['ak_info'] = ak.stock_individual_info_em(symbol=pure_code)
-        except Exception:
-            data['ak_info'] = None
-        try:
-            import akshare as ak
-            data['main_composition'] = ak.stock_zygc_em(symbol=pure_code)
-        except Exception:
-            data['main_composition'] = None
-    else:
-        data['ak_news'] = pd.DataFrame()
-        data['ak_forecast'] = pd.DataFrame()
-        data['ak_info'] = pd.DataFrame()
-
-    # ⚠️ 关键修复：当 stock.info 缺少 PE 等指标时，从 hist_1y 和 quarterly_financials 计算补全
-    if not data['info'].get('trailingPE') and not data['hist_1y'].empty:
-        try:
-            qf = data.get('quarterly_financials')
-            if qf is not None and not qf.empty:
-                # 尝试从最近4个季度的净利润计算 TTM EPS
-                for eps_key in ['Basic EPS', 'Diluted EPS']:
-                    if eps_key in qf.index:
-                        eps_vals = qf.loc[eps_key].dropna().head(4)
-                        if len(eps_vals) >= 1:
-                            eps_ttm = float(eps_vals.sum()) if len(eps_vals) == 4 else float(eps_vals.iloc[0]) * 4
-                            if eps_ttm > 0:
-                                cur_p = data['info'].get('currentPrice') or float(data['hist_1y']['Close'].iloc[-1])
-                                data['info']['trailingPE'] = round(cur_p / eps_ttm, 2)
-                                data['info']['trailingEps'] = round(eps_ttm, 2)
-                            break
-        except Exception:
-            pass
-
-    return data
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_price_history_long(ticker_input, years=3):
@@ -6179,6 +5549,9 @@ if ticker_input:
     try:
         with st.spinner(f"正在采集 {ticker_input} 全量多源数据..."):
             all_data = fetch_all_data(ticker_input)
+        if all_data.get("_snapshot_date"):
+            st.info(f"🗂️ Yahoo 数据接口当前对本服务器限流，{ticker_input} 的公司资料、财报与分析师数据"
+                    f"改用 {all_data['_snapshot_date']} 的数据快照显示；行情 K 线仍为实时数据。")
         info = all_data['info']
         hist_1y = all_data.get('hist_1y')
 
@@ -6337,7 +5710,7 @@ if generate_btn:
             ai_reply = llm_chat(
                 api_key_input,
                 [
-                    {"role": "system", "content": "你是严格的客观信息摘要助手，只做事实性转述，绝不生成投资建议、评级或目标价推荐。"},
+                    {"role": "system", "content": llm_cost.GUARDRAIL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
                 tier="heavy", temperature=0.3, purpose="研报摘要")
@@ -6426,7 +5799,9 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
             except Exception:
                 pass
 
-            with exec_c1:
+            # 三栏统一放进等高卡片：旧版雷达栏无卡片、另两栏卡片随内容伸缩，下沿相差 167px
+            EXEC_CARD_H = 570
+            with exec_c1, st.container(border=True, height=EXEC_CARD_H):
                 df_radar = pd.DataFrame(dict(r=list(radar_scores.values()), theta=list(radar_scores.keys())))
                 fig_radar = px.line_polar(df_radar, r='r', theta='theta', line_close=True, template="plotly_dark")
                 fig_radar.update_traces(fill='toself', line_color='#00F2FE', fillcolor='rgba(0, 242, 254, 0.15)')
@@ -6448,7 +5823,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
             # st.markdown 分别输出 <div> 与 </div>，Streamlit 会把每次调用渲染成
             # 各自独立的兄弟节点，浏览器随即把未闭合的 <div> 自动闭合，结果是
             # 渲染出两个高 37px 的空卡片，而正文内容全部落在卡片外面。
-            with exec_c2, st.container(border=True):
+            with exec_c2, st.container(border=True, height=EXEC_CARD_H):
                 st.markdown("#### 🎯 标的五维画像量化诊断")
                 st.markdown('<span class="badge-neutral">基于财务与行情指标映射的五维归一化解构</span>', unsafe_allow_html=True)
                 st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
@@ -6478,14 +5853,14 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                 st.markdown(f"💡 **五维综合健康指数**: <span style='font-size:1.15rem; font-weight:bold; color:#00F2FE;'>{avg_score:.1f} / 100</span>", unsafe_allow_html=True)
 
             # ===== V9 P1/P2 右栏：第三方分析师评级分布（原 Tab1 底部独立行，上移填补空白） =====
-            with exec_c3, st.container(border=True):
+            with exec_c3, st.container(border=True, height=EXEC_CARD_H):
                 st.markdown("#### 📊 第三方分析师评级分布")
                 st.markdown('<span class="badge-neutral">yfinance 历史评级记录 · 不构成投资建议</span>', unsafe_allow_html=True)
                 st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
 
                 recs_df_top = all_data.get('recommendations')
                 # V10 P1：饼图与文字说明 [1,1] 对半均分，垂直居中
-                pie_l, pie_r = st.columns([1, 1], vertical_alignment="center")
+                pie_l, pie_r = st.columns([1, 1], vertical_alignment="top")
                 with pie_l:
                     if recs_df_top is not None and not recs_df_top.empty:
                         try:
@@ -6605,68 +5980,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                 else:
                     # ==== 美股/港股：从 yfinance 季度利润表 + 业务概要提取 ====
                     us_biz_shown = False
-                    try:
-                        # 1. 尝试从季度利润表获取收入/利润关键行
-                        qis = all_data.get('quarterly_income_stmt')
-                        ais = all_data.get('income_stmt')
-                        fin_stmt = qis if (qis is not None and not qis.empty) else ais
-                        if fin_stmt is not None and not fin_stmt.empty:
-                            # 提取关键财务行（收入/成本/毛利/运营利润/净利）
-                            key_rows = ['Total Revenue', 'Cost Of Revenue', 'Gross Profit',
-                                        'Operating Income', 'Operating Expense', 'Net Income',
-                                        'EBITDA', 'Research And Development']
-                            available_rows = [r for r in key_rows if r in fin_stmt.index]
-                            if available_rows:
-                                display_df = fin_stmt.loc[available_rows].head(4)  # 最近4期
-                                # 格式化列名为日期字符串
-                                display_df.columns = [str(c.date()) if hasattr(c, 'date') else str(c) for c in display_df.columns]
-                                # 格式化数值为亿/万
-                                def fmt_fin_num(v):
-                                    if pd.isna(v): return 'N/A'
-                                    v = float(v)
-                                    if abs(v) >= 1e9: return f"{v/1e9:.2f}B"
-                                    if abs(v) >= 1e6: return f"{v/1e6:.1f}M"
-                                    return f"{v:,.0f}"
-                                display_formatted = display_df.applymap(fmt_fin_num)
-                                # 行名中英文映射
-                                row_name_map = {
-                                    'Total Revenue': '📊 总营收 (Revenue)',
-                                    'Cost Of Revenue': '💰 营业成本 (COGS)',
-                                    'Gross Profit': '📈 毛利 (Gross Profit)',
-                                    'Operating Income': '🏢 营业利润 (Operating Income)',
-                                    'Operating Expense': '📋 营业费用 (OpEx)',
-                                    'Net Income': '💵 净利润 (Net Income)',
-                                    'EBITDA': '📐 EBITDA',
-                                    'Research And Development': '🔬 研发支出 (R&D)',
-                                }
-                                display_formatted.index = [row_name_map.get(r, r) for r in display_formatted.index]
-                                is_quarterly = qis is not None and not qis.empty
-                                period_label = '季度' if is_quarterly else '年度'
-                                st.markdown(f"#### 📊 {s_title_name} 近期{period_label}利润表关键指标 <span style='font-size:0.75rem; opacity:0.6;'>来源: yfinance</span>", unsafe_allow_html=True)
-                                st.dataframe(display_formatted, width="stretch")
-
-                                # 如果有多期总营收，绘制营收趋势柱状图
-                                if 'Total Revenue' in fin_stmt.index:
-                                    rev_series = fin_stmt.loc['Total Revenue'].dropna().head(8)
-                                    if len(rev_series) >= 2:
-                                        rev_df = pd.DataFrame({
-                                            'Period': [str(c.date()) if hasattr(c, 'date') else str(c) for c in rev_series.index],
-                                            'Revenue': [float(v)/1e9 for v in rev_series.values]
-                                        })
-                                        rev_df = rev_df.iloc[::-1]  # 按时间正序
-                                        fig_rev = px.bar(rev_df, x='Period', y='Revenue',
-                                                        title=f"{s_title_name} {period_label}营收趋势 (单位: 十亿 {info.get('currency', 'USD')})",
-                                                        color_discrete_sequence=['#00b865'])
-                                        fig_rev.update_layout(
-                                            height=280, template='plotly_dark',
-                                            margin=dict(l=10, r=10, t=40, b=10),
-                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                            xaxis_title='', yaxis_title='Revenue (B)'
-                                        )
-                                        st.plotly_chart(fig_rev, width="stretch")
-                                us_biz_shown = True
-                    except Exception:
-                        pass
+                    # 季度利润表与营收趋势图已移除：与「财报与估值穿透」标签页的财务数据重复。
 
                     # 2. 展示公司业务概要（longBusinessSummary）
                     try:
@@ -6701,8 +6015,9 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
 
                 st.markdown('<div class="spacer-lg"></div>', unsafe_allow_html=True)
                 st.markdown("---")
-                c4_a, c4_b = st.columns([0.95, 1.05])
-                with c4_a:
+                c4_a, c4_b = st.columns([0.95, 1.05], vertical_alignment="top")
+                with c4_a, st.container(height=690, border=False):
+                    # 固定高度与右侧 660px 的 K 线图加图注对齐；文字超长时在框内滚动
                     st.markdown("### 📈 缠论技术面数据摘要", unsafe_allow_html=True)
                     st.caption("⚠️ 简化版分型/中枢识别 + RSI + BOLL，非买卖点建议")
                     chanlun_text_ui = analyze_kline_and_chanlun(all_data['hist_1y']) if all_data and all_data.get('hist_1y') is not None else "暂无K线数据"
@@ -6740,28 +6055,6 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                 else:
                     st.info("暂无足够的近3年历史价格数据，无法计算区间分位。")
 
-                st.markdown('<div class="spacer-lg"></div>', unsafe_allow_html=True)
-                st.markdown("#### 🧮 核心财务 KPI")
-
-                def kpi_card(label, value):
-                    return f'<div class="kpi-neon-card"><div class="kpi-neon-label">{label}</div><div class="kpi-neon-value">{value}</div></div>'
-
-                eps_ttm = info.get('trailingEps')
-                rev_growth_val = info.get('revenueGrowth')
-                net_margin_kpi = info.get('profitMargins') or info.get('netMargins')
-                roe_kpi = info.get('returnOnEquity')
-
-                k1, k2 = st.columns(2)
-                with k1:
-                    st.markdown(kpi_card("EPS (TTM)", f"{eps_ttm:.2f}" if isinstance(eps_ttm, (int, float)) else "N/A"), unsafe_allow_html=True)
-                with k2:
-                    st.markdown(kpi_card("营收增速", f"{rev_growth_val*100:.2f}%" if isinstance(rev_growth_val, (int, float)) else "N/A"), unsafe_allow_html=True)
-                st.markdown('<div class="spacer-sm"></div>', unsafe_allow_html=True)
-                k3, k4 = st.columns(2)
-                with k3:
-                    st.markdown(kpi_card("净利率 (TTM)", f"{net_margin_kpi*100:.2f}%" if isinstance(net_margin_kpi, (int, float)) else "N/A"), unsafe_allow_html=True)
-                with k4:
-                    st.markdown(kpi_card("ROE", f"{roe_kpi*100:.2f}%" if isinstance(roe_kpi, (int, float)) else "N/A"), unsafe_allow_html=True)
 
                 # =====================================================================
                 # V8 战役三：投行级现金流扩军 + 盈利惊喜历史，横向双列填满右侧空白
@@ -6800,7 +6093,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         dict(label="CAPEX / 经营现金流", value=(f"{_c2o*100:.1f}%" if _c2o is not None else "数据缺失"),
                              sub=("重资产扩张期" if (_c2o or 0) >= 0.5 else "现金流可覆盖资本开支") if _c2o is not None else "口径数据缺失",
                              direction=("down" if (_c2o or 0) >= 0.5 else "up") if _c2o is not None else "neutral"),
-                    ], cols=2)
+                    ], cols=2, fill_height=332)
                 with ex_c2:
                     _is_usd = bool(all_data.get('info', {}).get('currency') in ["USD", "$"])
                     fig_eps = build_eps_surprise_chart(eps_rows, height=300, is_usd=_is_usd)
@@ -6859,10 +6152,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         pass
 
                 gross_margin = info.get('grossMargins')
-                net_margin = info.get('profitMargins') or info.get('netMargins')
-                roe = info.get('returnOnEquity')
                 debt_ratio = info.get('debtToEquity')
-                fcf = info.get('freeCashflow')
 
                 rev_trend = "N/A"
                 if isinstance(rev_now, (int, float)) and isinstance(rev_prev, (int, float)) and rev_prev != 0:
@@ -6889,15 +6179,6 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                 elif qf is not None and not qf.empty and 'OperatingIncome' in qf.index:
                     op_inc_now = qf.loc['OperatingIncome'].iloc[0]
                     if len(qf.columns) > 1: op_inc_prev = qf.loc['OperatingIncome'].iloc[1]
-
-                qcf = all_data.get('quarterly_cashflow')
-                op_cf_now = op_cf_prev = None
-                if qcf is not None and not qcf.empty and 'Operating Cash Flow' in qcf.index:
-                    op_cf_now = qcf.loc['Operating Cash Flow'].iloc[0]
-                    if len(qcf.columns) > 1: op_cf_prev = qcf.loc['Operating Cash Flow'].iloc[1]
-                elif qcf is not None and not qcf.empty and 'OperatingCashFlow' in qcf.index:
-                    op_cf_now = qcf.loc['OperatingCashFlow'].iloc[0]
-                    if len(qcf.columns) > 1: op_cf_prev = qcf.loc['OperatingCashFlow'].iloc[1]
 
                 qbs = all_data.get('quarterly_balance_sheet')
                 debt_to_assets = None
@@ -6943,11 +6224,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         make_card("💵 净利润 (Net Income)", fnum(np_now, money=True), fmt_trend(np_now, np_prev)),
                         make_card("🏢 营业利润 (Operating Income)", fnum(op_inc_now, money=True), fmt_trend(op_inc_now, op_inc_prev)),
                         make_card("🔬 研发投入 (R&D)", fnum(rd_now, money=True), fmt_trend(rd_now, rd_prev)),
-                        make_card("💸 经营性现金流 (OCF)", fnum(op_cf_now, money=True), fmt_trend(op_cf_now, op_cf_prev)),
-                        make_card("🌊 自由现金流 (FCF)", fnum(fcf, money=True), '<span class="trend-neutral">—</span>'),
                         make_card("📈 毛利率 (Gross Margin)", fnum(gross_margin, pct=True), '<span class="trend-neutral">—</span>'),
-                        make_card("📊 净利率 (Net Margin)", fnum(net_margin, pct=True), '<span class="trend-neutral">—</span>'),
-                        make_card("🧬 ROE (净资产收益率)", fnum(roe, pct=True), '<span class="trend-neutral">—</span>'),
                         make_card("🛡️ 资产负债率 (Debt/Assets)", fnum(debt_to_assets, pct=True), '<span class="trend-neutral">—</span>'),
                     ])
                     + '</div>'
@@ -6974,7 +6251,6 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     return f"{v/1e8:,.2f}亿" if abs(v) >= 1e8 else f"{v:,.0f}"
 
                 ocf_r = adv_metrics.get('ocf_to_ni')
-                peg_v = adv_metrics.get('peg')
                 rd_r = adv_metrics.get('rd_to_revenue')
                 gap_v = (adv_metrics.get('ocf') - adv_metrics.get('net_income')) \
                     if (adv_metrics.get('ocf') is not None and adv_metrics.get('net_income') is not None) else None
@@ -6982,10 +6258,6 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                 render_kpi_grid([
                     dict(label="EBITDA (TTM)", value=_money_cn(adv_metrics.get('ebitda')),
                          sub=adv_metrics.get('ebitda_note') or "报表未披露且无法由营业利润+折旧摊销推算"),
-                    dict(label="EBITDA 利润率", value=_pct(adv_metrics.get('ebitda_margin')),
-                         sub="EBITDA / 营业总收入", value_direction="accent" if adv_metrics.get('ebitda_margin') else None),
-                    dict(label="经营性现金流 (OCF)", value=_money_cn(adv_metrics.get('ocf')),
-                         sub="现金流量表经营活动净额"),
                     dict(label="OCF / 净利润", value=_x(ocf_r),
                          sub=adv_metrics.get('earnings_quality_label') or "现金流或净利润缺失",
                          direction=("up" if (ocf_r or 0) >= 1 else "down") if ocf_r else "neutral",
@@ -7002,24 +6274,10 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     dict(label="ROE (杜邦推算)", value=_pct(adv_metrics.get('roe_dupont')),
                          sub=f"报表口径 ROE {_pct(adv_metrics.get('roe_reported'))}",
                          value_direction="accent" if adv_metrics.get('roe_dupont') else None),
-                    dict(label="研发投入 (TTM)", value=_money_cn(adv_metrics.get('rd')),
-                         sub="利润表 Research And Development"),
                     dict(label="研发费用率", value=_pct(rd_r),
                          sub=("研发强度高" if (rd_r or 0) >= 0.10 else "研发强度中低") if rd_r else "接口未披露研发科目",
                          value_direction="accent" if rd_r else None),
-                    dict(label="PEG (PE / 增速)", value=(f"{peg_v:.2f}" if peg_v else "数据缺失"),
-                         sub=(adv_metrics.get('peg_source') or "一致预期增速缺失"),
-                         direction=("up" if (peg_v or 99) < 1 else "down") if peg_v else "neutral",
-                         value_direction=("up" if (peg_v or 99) < 1 else "down") if peg_v else None),
                 ], cols=4)
-
-                if adv_metrics.get('eps_growth_3y'):
-                    st.caption(f"📌 PEG 分母使用的前瞻 EPS 一致预期年化增速 = "
-                               f"{adv_metrics['eps_growth_3y']*100:.2f}%（{adv_metrics.get('peg_source')}）；"
-                               f"PEG 仅为客观倍数计算，不构成估值结论。")
-                else:
-                    st.warning("⚠️ 未能取得前瞻 EPS 一致预期增速（接口限流或该标的无覆盖），"
-                               "因此 PEG 留空。")
 
                 dp_c1, dp_c2 = st.columns(2)
                 with dp_c1:
@@ -7037,7 +6295,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
 
                 # ---------- 同行业估值基准（动态成分股中位数，非写死常量） ----------
                 st.markdown("---")
-                section_bar("🏭 同行业实时估值基准", "成分股倍数中位数动态拉取 · 无真实同业数据即明示缺失")
+                section_bar("🏭 同行业实时估值基准", "成分股倍数中位数动态拉取")
                 bench = None
                 try:
                     bench = fetch_industry_benchmark(

@@ -1,0 +1,177 @@
+{
+  "built_at": "2026-10-01",
+  "universe": [
+    "NVDA",
+    "MSFT",
+    "AAPL",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "AVGO",
+    "AMD",
+    "JPM"
+  ],
+  "tickers": {
+    "NVDA": {
+      "all_data": true,
+      "bench_peers": 10,
+      "n_scored": 811,
+      "n_pending": 149,
+      "n_firms": 55,
+      "hit_rate": 74.2,
+      "median_abs_err": 46.1,
+      "window": [
+        "2017-08-11",
+        "2025-09-29"
+      ],
+      "n_buy_ratings": 730,
+      "buy_rose_share": 92.9,
+      "buy_median_ret": 61.2
+    },
+    "MSFT": {
+      "all_data": true,
+      "bench_peers": 10,
+      "n_scored": 667,
+      "n_pending": 105,
+      "n_firms": 49,
+      "hit_rate": 59.5,
+      "median_abs_err": 17.3,
+      "window": [
+        "2016-11-17",
+        "2025-09-26"
+      ],
+      "n_buy_ratings": 640,
+      "buy_rose_share": 77.3,
+      "buy_median_ret": 26.4
+    },
+    "AAPL": {
+      "all_data": true,
+      "bench_peers": 5,
+      "n_scored": 838,
+      "n_pending": 109,
+      "n_firms": 52,
+      "hit_rate": 49.6,
+      "median_abs_err": 18.3,
+      "window": [
+        "2018-12-07",
+        "2025-09-26"
+      ],
+      "n_buy_ratings": 621,
+      "buy_rose_share": 89.4,
+      "buy_median_ret": 25.1
+    },
+    "AMZN": {
+      "all_data": true,
+      "bench_peers": 10,
+      "n_scored": 839,
+      "n_pending": 148,
+      "n_firms": 60,
+      "hit_rate": 43.4,
+      "median_abs_err": 17.6,
+      "window": [
+        "2020-02-05",
+        "2025-09-24"
+      ],
+      "n_buy_ratings": 821,
+      "buy_rose_share": 74.4,
+      "buy_median_ret": 16.2
+    },
+    "GOOGL": {
+      "all_data": true,
+      "bench_peers": 10,
+      "n_scored": 813,
+      "n_pending": 148,
+      "n_firms": 57,
+      "hit_rate": 59.3,
+      "median_abs_err": 25.0,
+      "window": [
+        "2017-10-27",
+        "2025-09-25"
+      ],
+      "n_buy_ratings": 727,
+      "buy_rose_share": 75.7,
+      "buy_median_ret": 31.6
+    },
+    "META": {
+      "all_data": true,
+      "bench_peers": 10,
+      "n_scored": 392,
+      "n_pending": 0,
+      "n_firms": 51,
+      "hit_rate": 81.1,
+      "median_abs_err": 42.6,
+      "window": [
+        "2021-05-03",
+        "2024-09-30"
+      ],
+      "n_buy_ratings": 347,
+      "buy_rose_share": 93.9,
+      "buy_median_ret": 72.1
+    },
+    "TSLA": {
+      "all_data": true,
+      "bench_peers": 5,
+      "n_scored": 834,
+      "n_pending": 94,
+      "n_firms": 45,
+      "hit_rate": 32.3,
+      "median_abs_err": 35.1,
+      "window": [
+        "2019-10-24",
+        "2025-09-26"
+      ],
+      "n_buy_ratings": 428,
+      "buy_rose_share": 68.7,
+      "buy_median_ret": 24.4
+    },
+    "AVGO": {
+      "all_data": true,
+      "bench_peers": 10,
+      "n_scored": 405,
+      "n_pending": 92,
+      "n_firms": 38,
+      "hit_rate": 75.6,
+      "median_abs_err": 25.5,
+      "window": [
+        "2016-10-04",
+        "2025-09-15"
+      ],
+      "n_buy_ratings": 381,
+      "buy_rose_share": 91.6,
+      "buy_median_ret": 45.0
+    },
+    "AMD": {
+      "all_data": true,
+      "bench_peers": 10,
+      "n_scored": 482,
+      "n_pending": 155,
+      "n_firms": 47,
+      "hit_rate": 61.6,
+      "median_abs_err": 41.6,
+      "window": [
+        "2016-11-22",
+        "2025-09-09"
+      ],
+      "n_buy_ratings": 364,
+      "buy_rose_share": 75.0,
+      "buy_median_ret": 51.7
+    },
+    "JPM": {
+      "all_data": true,
+      "bench_peers": 9,
+      "n_scored": 265,
+      "n_pending": 40,
+      "n_firms": 28,
+      "hit_rate": 64.5,
+      "median_abs_err": 17.2,
+      "window": [
+        "2016-11-30",
+        "2025-09-29"
+      ],
+      "n_buy_ratings": 188,
+      "buy_rose_share": 84.0,
+      "buy_median_ret": 28.8
+    }
+  }
+}
