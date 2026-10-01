@@ -1,3 +1,28 @@
+# ============================================================================
+# APP.py · Anti Securities Terminal 的 Streamlit 入口（页面与交互层）
+# ----------------------------------------------------------------------------
+# 运行：streamlit run APP.py        产品说明：PRODUCT.md    运行与评测：README.md
+#
+# 本文件只负责"怎么展示"。取数与计算放在独立模块，可单独测试：
+#   market_data.py  个股全量数据包、同业估值基准           （无 Streamlit 依赖）
+#   scorecard.py    分析师目标价准确度记分卡（核心算法）   （无 Streamlit 依赖）
+#   llm_cost.py     大模型路由、单价、成本算术、护栏检测   （无 Streamlit 依赖）
+#   snapshot.py     云端被 Yahoo 限流时改读 data/snapshots/ 的带日期快照
+#
+# 页面自上而下的执行顺序（Streamlit 按代码顺序渲染）：
+#   1. 顶部：标题栏 → 实时快讯带 render_live_ribbon → 搜索框 / API 密钥 / 生成按钮
+#   2. 市场概览：全球市场主线 → 跨资产矩阵 render_cross_asset_matrix → 热门标的
+#      → 全市场快讯 get_market_tape_ui → 宏观资金面 render_macro_capital_board
+#      → 资金面与利率监控室 render_rates_monitor → 宏观大事日历 render_macro_calendar
+#   3. 个股分析（输入代码后）：取数 fetch_all_data → 指挥中心 render_command_center
+#      → 准确度记分卡 render_analyst_accuracy（产品主张所在）→ 标的综合摘要
+#      → 四个标签页（反共识诊断 / 财报与估值穿透 / 机构与资金追踪 / AI 中性舆情）
+#      → 估值计算器 get_crowdsource_ui
+#   4. 页面末尾：AI 用量与每用户成本面板 render_llm_cost_panel
+#
+# 文件中标有"▼▼▼ 内联模块"的段落，是早期独立文件在 V8 合并进来的历史结构，
+# 原始版本存档于 _legacy_modules/，不再运行。
+# ============================================================================
 from __future__ import annotations
 import os
 import time
