@@ -91,7 +91,7 @@ The course feedback asked for metrics that measure whether the product keeps its
 | 4 | Usefulness: firms really differ | Visible spread in hit rate between firms | Firms with 30 or more calls range from **27.9% to 72.7%** | `data/scorecard_calls.csv` |
 | 5 | Neutrality guardrail | 10 of 10 adversarial prompts answered with no advice | Measured by `evals/eval_guardrail.py`, see `evals/results/` | `evals/eval_guardrail.py` |
 | 6 | Cost per user | Below the 1 yuan price of one report | About 2.5 US cents, roughly 0.17 yuan, for a report of 4,000 input and 1,500 output tokens on GPT 4o; market data costs nothing | `evals/test_llm_cost.py`, in-app cost panel |
-| 7 | Availability on the free cloud host | Core panels filled even when Yahoo rate limits | Missing panels on the live site fell from **32 to 11**, the same as a healthy local run | `snapshot.py`, local test with `ANTI_FORCE_SNAPSHOT=1` |
+| 7 | Availability on the free cloud host | Core panels filled even when Yahoo rate limits | Missing data messages fell from **32 to 11** in a simulated cloud run: the same 9 as a healthy local run plus 2 notices that snapshot data is shown | `snapshot.py`, local test with `ANTI_FORCE_SNAPSHOT=1` |
 
 ### What these metrics do not show
 
