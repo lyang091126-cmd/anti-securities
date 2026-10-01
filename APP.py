@@ -34,7 +34,7 @@ st.set_page_config(
 #   - fetch_industry_benchmark(): 同行业 PE/PB/PS 基准**动态实时拉取**
 #     （美股/港股走 yfinance Industry 成分股；A 股走东财行业板块成分股），
 #     绝不返回 PE=20x 这类静态写死常量。拉取失败 → 返回 None，由 UI 层
-#     用 st.warning 明示"真实数据缺失"，禁止编造。
+#     用 st.warning 明示"数据缺失"，禁止编造。
 #   - fetch_institutional_holdings(): 机构持仓多接口级联降级
 #     （东财十大流通股东 → 十大股东 → 股东持股明细 → yfinance 机构持仓），
 #     全部失败 → 返回空结果 + 失败原因，绝不生成"张三/李四"占位数据。
@@ -783,7 +783,7 @@ def _benchmark_a_share(industry_name: str, pure_code: str) -> dict | None:
         pb_med, pb_mean = _median_mean(cons[pb_col]) if pb_col else (None, None)
 
         # PS 无直接字段：用 总市值 / 营业总收入(TTM) 近似需逐股拉财报，成本过高，
-        # 因此这里明确置 None，由 UI 展示"该口径真实数据缺失"，不做编造。
+        # 因此这里明确置 None，由 UI 展示"该口径数据缺失"，不做编造。
         if pe_med is None and pb_med is None:
             return None
         return {
@@ -867,7 +867,7 @@ def fetch_institutional_holdings(ticker: str, is_a_share: bool, pure_code: str,
     """机构/大股东持仓真实数据抓取。
 
     返回 {'names': [...], 'shares': [...], 'source': str, 'error': str|None}
-    任何情况下都不会返回虚构股东名，names 为空即代表真实数据缺失。
+    任何情况下都不会返回虚构股东名，names 为空即代表数据缺失。
     """
     result = {"names": [], "shares": [], "source": "", "error": None}
     errors = []
@@ -1833,7 +1833,7 @@ def render_gap_bars(pairs):
             rows_html.append(
                 f'<div class="gapbar-row"><div class="gapbar-label">{name}</div>'
                 f'<div class="gapbar-track"><div class="gapbar-mid"></div></div>'
-                f'<div class="gapbar-val" style="color:{C_NEUTRAL}">真实数据缺失</div></div>')
+                f'<div class="gapbar-val" style="color:{C_NEUTRAL}">数据缺失</div></div>')
             continue
         gap = (cur_v - ref_v) / ref_v * 100.0
         span = min(abs(gap), 100.0) / 2.0            # 半幅最大 50%
@@ -2866,9 +2866,9 @@ def get_crowdsource_ui(api_key, ticker, all_data=None):
     if bench_source:
         st.caption(f"📡 同行业估值基准来源：{bench_source}")
     else:
-        st.warning("⚠️ 同行业成分股估值基准真实数据缺失（行业未匹配 / 接口限流"
+        st.warning("⚠️ 同行业成分股估值基准数据缺失（行业未匹配 / 接口限流"
                    + (f"：{bench_err}" if bench_err else "") +
-                   "）。本站拒绝使用 PE=20x 这类写死常量兜底，因此缺失口径的推演结果将直接留空。")
+                   "），缺失口径的推演结果留空。")
 
         # 布局：左侧输入预测财务指标，右侧展示水位差卡片
     # V10 P9：左文右图垂直居中对齐，消除两侧视觉高低差
@@ -2924,15 +2924,15 @@ def get_crowdsource_ui(api_key, ticker, all_data=None):
 
         # 估值差计算与渲染
         def get_gap_card_html(label, curr_val, ref_val, missing):
-            def_lbl = (" <span style='font-size:0.68rem; color:#8B93A7;'>(同业真实数据缺失)</span>"
+            def_lbl = (" <span style='font-size:0.68rem; color:#8B93A7;'>(同业数据缺失)</span>"
                        if missing else " <span style='font-size:0.68rem; color:#00E676;'>(同业实时中位数)</span>")
             if ref_val is None or curr_val is None or pd.isna(curr_val) or curr_val <= 0:
-                ref_txt = f"<b>{ref_val:.2f}x</b>" if isinstance(ref_val, (int, float)) else "真实数据缺失"
-                cur_txt = f"<b>{curr_val:.2f}x</b>" if isinstance(curr_val, (int, float)) and curr_val > 0 else "真实数据缺失"
+                ref_txt = f"<b>{ref_val:.2f}x</b>" if isinstance(ref_val, (int, float)) else "数据缺失"
+                cur_txt = f"<b>{curr_val:.2f}x</b>" if isinstance(curr_val, (int, float)) and curr_val > 0 else "数据缺失"
                 return f"""<div class="gap-card">
     <div class="gap-title">{label}{def_lbl}</div>
     <div class="gap-vals">当前实际: {cur_txt} | 同业中位: {ref_txt}</div>
-    <div style="color: #8B93A7; font-weight: 600; font-size: 0.85rem; margin-top: 4px;">水位差: 无法计算（拒绝假值填充）</div>
+    <div style="color: #8B93A7; font-weight: 600; font-size: 0.85rem; margin-top: 4px;">水位差: 无法计算</div>
 </div>"""
 
             gap_pct = ((curr_val - ref_val) / ref_val) * 100
@@ -3028,8 +3028,7 @@ def get_crowdsource_ui(api_key, ticker, all_data=None):
         st.caption("📌 以上均为「用户输入的财务预测 × 同业实时倍数」的机械算术结果，"
                    "既非本站目标价，也不构成任何投资建议。")
     else:
-        st.warning("⚠️ 同行业 PE/PB/PS 真实基准全部缺失，估值推演器无法给出任何倍数法结果。"
-                   "本站严格禁止用写死的假设倍数生成推演区间。")
+        st.warning("⚠️ 同行业 PE/PB/PS 基准数据缺失，估值推演器暂时无法给出倍数法结果。")
 
     # 下方原 UGC 录入与直方图查看功能
     st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
@@ -4336,7 +4335,7 @@ def render_cross_asset_matrix():
         '<th>Asset</th><th>Last</th><th>Chg %</th><th style="text-align:right;">5D Trend</th>'
         '</tr></thead><tbody>' + body + '</tbody></table></div>')
     st.caption("数据源：yfinance（CL=F / GC=F / ^TNX / CNY=X / XIN9.FGI）与东方财富中美国债序列。"
-               "标注「历史缺失」者为该接口仅返回当前报价、无日线序列，不以任何推算值填充。")
+               "标注「历史缺失」者为该接口仅返回当前报价、无日线序列。")
 
 
 # --- 4.1 全球市场主线 ---
@@ -4463,7 +4462,7 @@ def fetch_cny_fx(n_days: int = 90):
     资金面监控室原本只覆盖"资金的价格"（Shibor / 国债曲线），
     缺了"货币的对外价格"这一环——而中美利差卡片本身就把
     "影响跨境资金流向与汇率预期"写进了说明，却始终没有汇率数据可看。
-    返回 None 表示真实数据缺失，由 UI 层显式提示，不做任何填充。
+    返回 None 表示数据缺失，由 UI 层显式提示，不做任何填充。
     """
     _sd = (datetime.datetime.now() - datetime.timedelta(days=n_days + 30)).strftime("%Y%m%d")
     _ed = datetime.datetime.now().strftime("%Y%m%d")
@@ -4572,7 +4571,7 @@ def render_rates_monitor():
     fx = fetch_cny_fx()
 
     st.markdown("### 🏦 资金面与利率监控室 <span style='font-size:0.78rem; opacity:0.6;'>(利率 = 股票估值的分母 · 对标固收资金面日报)</span>", unsafe_allow_html=True)
-    st.caption("无风险利率 / Shibor / 中债收益率曲线均为真实接口数据；利率传导说明为客观机制描述，不构成任何利率或行情预测。")
+    st.caption("利率传导说明为客观机制描述，不构成任何利率或行情预测。")
 
     # ===== 主视觉：利率四联快览（V12） =====
     # 旧版用 st.columns([1.35,1,1], vertical_alignment="center") 分三列：左列一张大卡、
@@ -4599,7 +4598,7 @@ def render_rates_monitor():
     else:
         _cards.append(_rate_card("⚖️", "无风险利率锚 · 中国 10Y 国债",
                                  '<span class="rate-kpi-na">数据缺失</span>',
-                                 "真实接口未返回，不做任何填充", primary=True))
+                                 "接口未返回", primary=True))
 
     if rf and rf.get("us10"):
         # 同一天的中债 / 美债配对报价（可能比上面的 cn10 晚一个交易日，故单独标注日期）
@@ -4612,7 +4611,7 @@ def render_rates_monitor():
     else:
         _cards.append(_rate_card("🌍", "中美 10Y 利差（中 − 美）",
                                  '<span class="rate-kpi-na">数据缺失</span>',
-                                 "美债 10Y 实时接口未返回<br>不以任何假设值替代"))
+                                 "美债 10Y 实时接口未返回"))
 
     def _shibor_card(icon, lbl, col, chg_col, desc):
         if shb.empty:
@@ -4643,7 +4642,7 @@ def render_rates_monitor():
     else:
         _cards.append(_rate_card("💱", "美元兑人民币 · 央行中间价",
                                  '<span class="rate-kpi-na">数据缺失</span>',
-                                 "中行外汇牌价接口未返回<br>不以任何假设值替代"))
+                                 "中行外汇牌价接口未返回"))
 
     st.html('<div class="rate-kpi-grid">' + "".join(_cards) + '</div>')
 
@@ -4741,7 +4740,7 @@ def render_rates_monitor():
             f'人民币承压；汇率贬值预期又会通过外资持仓成本影响 A 股/港股定价。'
             f'以上为机制描述，不构成任何汇率或行情预测。</div>', unsafe_allow_html=True)
     elif fx is None:
-        st.info("人民币汇率（央行中间价）真实数据缺失，不做任何填充。")
+        st.info("人民币汇率（央行中间价）数据缺失。")
 
     # ===== 利率 → 估值分母传导说明 =====
     st.markdown('<div class="ana-note">🔗 <b>利率与你的持仓的关系（客观传导框架）</b>：无风险利率是 DCF 估值的分母起点——利率下行降低折现率、抬升远期现金流的现值，高久期成长资产（高 PE、盈利后置）估值弹性最大；利率上行则反向。10Y 国债的边际变动对成长股合理 PE 的影响显著大于对低 PE 价值股。本监控室的所有说明均为机制描述，不构成任何利率走势或买卖判断。</div>', unsafe_allow_html=True)
@@ -5083,7 +5082,7 @@ def render_target_band(low, mean, high, cur_price, currency="", n_analysts=None)
 
     if not (_ok(low) and _ok(high) and _ok(cur_price)) or high <= low:
         return ('<div class="bb-na" style="padding:8px 0;">'
-                '机构目标价区间数据缺失，不做任何推算填充。</div>')
+                '机构目标价区间数据缺失。</div>')
 
     span = high - low
     pos = max(0.0, min(100.0, (cur_price - low) / span * 100))
@@ -5149,8 +5148,7 @@ def render_analyst_accuracy(ticker: str, currency: str = ""):
     rec = fetch_analyst_track_record(ticker)
     if not rec.get("ok"):
         st.info(f"📭 {ticker} 暂无可计分的机构观点：{rec.get('reason','原因未知')}。"
-                f"（Yahoo 的历史机构观点目前仅覆盖美股；A股/港股返回空集，"
-                f"此处如实留空，不以任何替代口径充数。）")
+                f"（Yahoo 的历史机构观点目前仅覆盖美股，A股/港股暂无数据。）")
         return
 
     calls = rec["calls"]
@@ -5733,7 +5731,7 @@ def analyze_kline_and_chanlun(df):
         '<div style="background:rgba(11, 17, 32, 0.55); border:1px solid rgba(255,255,255,0.08); '
         'border-radius:10px; padding:14px 16px; font-size:0.85rem; line-height:1.9; color:#D1D4DC;">'
         + "".join(p for p in _n_parts if p)
-        + '<div style="font-size:0.72rem; opacity:0.6; margin-top:8px;">以上为量化指标的客观串联描述，全部基于真实K线计算，不构成任何投资建议。</div></div>'
+        + '<div style="font-size:0.72rem; opacity:0.6; margin-top:8px;">以上为量化指标的客观串联描述，不构成任何投资建议。</div></div>'
     )
 
     html = f"""<div style="background:rgba(30, 41, 59, 0.7); padding:20px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px);">
@@ -6089,7 +6087,6 @@ def build_chain_html(info, ticker):
 <div style="font-size:2rem; margin-bottom:1rem;">📭</div>
 <div style="margin-bottom:0.5rem;">暂无 <b style="color:#4B9FFF;">{name} ({ticker})</b> 的专属产业链数据</div>
 <div style="font-size:0.82rem; opacity:0.7;">行业: {industry_display} | 板块: {sector or '未获取'}</div>
-<div style="font-size:0.82rem; opacity:0.6; margin-top:1rem;">本站严格遵循"无专属数据不展示"原则，绝不使用通用描述占位。</div>
 </div>
 </div>"""
 
@@ -6127,7 +6124,7 @@ def get_stock_profile(ticker_input, info, mapped_name="", institutional_holders_
     级联顺序（A 股）：东财十大流通股东 → 东财十大股东 → 流通股东明细；
     级联顺序（美/港股）：13F institutional_holders → mutualfund_holders → insider_roster。
     任一接口成功即返回真实披露数据并附带来源；全部失败则 names 为空 + 记录失败原因，
-    由 UI 层用 st.warning 明示"监管未披露或接口限流，真实数据缺失"，绝不编造占位股东。
+    由 UI 层用 st.warning 明示"监管未披露或接口限流，数据缺失"，绝不编造占位股东。
     """
     s_name = mapped_name or info.get('shortName') or ticker_input
     pure_code = ticker_input.replace('.SS', '').replace('.SZ', '').replace('.BJ', '').replace('.HK', '')
@@ -6294,13 +6291,13 @@ if generate_btn:
 3. 新闻摘要只做"客观事实压缩转述"，不做"这对股价意味着什么"的预测性判断；如需分类事件性质，只能用"正面/负面/中性事件描述"这种基于新闻内容本身的客观分类，不能用"利好/利空"这类带交易暗示的词。
 4. 所有内容必须标注来源（如"来源：yfinance"/"来源：akshare"/"第三方机构历史观点，非本报告判断"）。
 
-【基础行情与财务数据（真实抓取）】
+【基础行情与财务数据】
 {summary_data}
 
-【多源新闻快讯（真实抓取）】
+【多源新闻快讯】
 {news_for_prompt}
 
-【近1年K线量化与缠论指标（程序计算，非编造）】
+【近1年K线量化与缠论指标（程序计算）】
 {chanlun_text}
 
 【第三方分析师历史数据与机构持仓（真实抓取，历史事实）】
@@ -6369,7 +6366,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
     # ===== V7 战役三：核心指挥中心（4×N 高密度矩阵，1 秒读盘）=====
     section_bar(
         f"⌘ COMMAND CENTER · {info.get('shortName') or mapped_name or ticker_input} ({ticker_input})",
-        "全部字段实时抓取；缺失一律标注「数据缺失」，绝不填充假值 · 不构成投资建议",
+        "缺失字段标注「数据缺失」 · 不构成投资建议",
     )
     try:
         render_command_center(
@@ -6445,7 +6442,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     plot_bgcolor='rgba(0,0,0,0)'
                 )
                 st.plotly_chart(fig_radar, width="stretch", config={'displayModeBar': False})
-                st.caption("📌 五维评分基于真实财务数据的固定映射公式归一化到0-100，客观指标可视化，不代表投资建议。")
+                st.caption("📌 五维评分由财务数据按固定公式归一化到0-100，不代表投资建议。")
 
             # V12：改用 st.container(border=True) 真正包裹内容。旧版用两次独立的
             # st.markdown 分别输出 <div> 与 </div>，Streamlit 会把每次调用渲染成
@@ -6453,7 +6450,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
             # 渲染出两个高 37px 的空卡片，而正文内容全部落在卡片外面。
             with exec_c2, st.container(border=True):
                 st.markdown("#### 🎯 标的五维画像量化诊断")
-                st.markdown('<span class="badge-neutral">基于真实财务与行情指标映射的五维归一化解构</span>', unsafe_allow_html=True)
+                st.markdown('<span class="badge-neutral">基于财务与行情指标映射的五维归一化解构</span>', unsafe_allow_html=True)
                 st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
 
                 val_score = radar_scores.get('估值', 50)
@@ -6710,14 +6707,13 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     st.caption("⚠️ 简化版分型/中枢识别 + RSI + BOLL，非买卖点建议")
                     chanlun_text_ui = analyze_kline_and_chanlun(all_data['hist_1y']) if all_data and all_data.get('hist_1y') is not None else "暂无K线数据"
                     st.markdown(chanlun_text_ui, unsafe_allow_html=True)
-                    st.caption("📌 以上数据均基于真实K线计算得出，非AI编造。")
                 with c4_b:
                     if not all_data['hist_1y'].empty:
                         # V7 战役三：TradingView 级专业图 —— 多均线(含 MA120/MA250 牛熊分界)
                         # + 成交量副图 + MACD + RSI 四轨同屏
                         kline_fig = build_pro_kline_chart(all_data['hist_1y'], ticker_input, height=660)
                         st.plotly_chart(kline_fig, width="stretch", config={'displayModeBar': False})
-                        st.caption("📌 MA120/MA250 为长周期牛熊分界参考线，均为真实收盘价滚动均值，非买卖信号。")
+                        st.caption("📌 MA120/MA250 为长周期牛熊分界参考线，为收盘价滚动均值，非买卖信号。")
 
 
 
@@ -6740,7 +6736,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         当前价格处于近3年股价区间的第 <b style="color:#00F2FE; font-size:1.1rem;">{pct_rank:.0f}</b> 百分位
                     </div>
                     """, unsafe_allow_html=True)
-                    st.caption("⚠️ 这是「股价」在其自身近3年历史区间中的相对位置，不是「PE估值」的历史分位。严谨的PE历史分位需要完整历史EPS序列，免费数据源无法可靠获取，为避免用假精度误导用户，本站不提供编造的PE分位数字。")
+                    st.caption("⚠️ 这是「股价」在其自身近3年历史区间中的相对位置，不是「PE估值」的历史分位。严谨的PE历史分位需要完整历史EPS序列，免费数据源无法可靠获取，因此本站暂不提供PE分位。")
                 else:
                     st.info("暂无足够的近3年历史价格数据，无法计算区间分位。")
 
@@ -6826,7 +6822,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         st.html("<div>" + "".join(tags) + "</div>")
                     else:
                         st.warning("⚠️ yfinance 财报日历未返回 EPS 预期/实际数据（接口限流或该标的无覆盖），"
-                                   "盈利惊喜历史真实数据缺失，不做任何填充。")
+                                   "盈利惊喜历史数据缺失。")
 
                 st.markdown('<div class="spacer-lg"></div>', unsafe_allow_html=True)
                 st.markdown("---")
@@ -7012,7 +7008,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                          sub=("研发强度高" if (rd_r or 0) >= 0.10 else "研发强度中低") if rd_r else "接口未披露研发科目",
                          value_direction="accent" if rd_r else None),
                     dict(label="PEG (PE / 增速)", value=(f"{peg_v:.2f}" if peg_v else "数据缺失"),
-                         sub=(adv_metrics.get('peg_source') or "一致预期增速缺失，拒绝用假设增速凑数"),
+                         sub=(adv_metrics.get('peg_source') or "一致预期增速缺失"),
                          direction=("up" if (peg_v or 99) < 1 else "down") if peg_v else "neutral",
                          value_direction=("up" if (peg_v or 99) < 1 else "down") if peg_v else None),
                 ], cols=4)
@@ -7022,8 +7018,8 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                                f"{adv_metrics['eps_growth_3y']*100:.2f}%（{adv_metrics.get('peg_source')}）；"
                                f"PEG 仅为客观倍数计算，不构成估值结论。")
                 else:
-                    st.warning("⚠️ 未能取得任何真实的前瞻 EPS 一致预期增速（接口限流或该标的无覆盖），"
-                               "因此 PEG 明确留空 —— 本站拒绝用假设增速编造 PEG。")
+                    st.warning("⚠️ 未能取得前瞻 EPS 一致预期增速（接口限流或该标的无覆盖），"
+                               "因此 PEG 留空。")
 
                 dp_c1, dp_c2 = st.columns(2)
                 with dp_c1:
@@ -7031,13 +7027,13 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     if fig_dp is not None:
                         st.plotly_chart(fig_dp, width="stretch", config={'displayModeBar': False})
                     else:
-                        st.warning("⚠️ 杜邦拆解所需的资产负债表科目缺失（接口未返回总资产/股东权益），真实数据缺失，不做推测填充。")
+                        st.warning("⚠️ 杜邦拆解所需的资产负债表科目缺失（接口未返回总资产/股东权益），数据缺失。")
                 with dp_c2:
                     fig_q = build_quality_bridge_chart(adv_metrics)
                     if fig_q is not None:
                         st.plotly_chart(fig_q, width="stretch", config={'displayModeBar': False})
                     else:
-                        st.warning("⚠️ 经营性现金流或净利润科目缺失，无法做利润含金量对比，真实数据缺失。")
+                        st.warning("⚠️ 经营性现金流或净利润科目缺失，无法做利润含金量对比，数据缺失。")
 
                 # ---------- 同行业估值基准（动态成分股中位数，非写死常量） ----------
                 st.markdown("---")
@@ -7060,7 +7056,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     def _gap_card(name, cur, ref):
                         if cur is None or ref is None:
                             return dict(label=f"{name} 水位差", value="数据缺失",
-                                        sub="本标的或同业该口径真实数据缺失")
+                                        sub="本标的或同业该口径数据缺失")
                         g = (cur - ref) / ref * 100
                         return dict(label=f"{name} 水位差", value=f"{g:+.1f}%",
                                     sub=f"本标的 {cur:.2f}x  /  同业中位 {ref:.2f}x",
@@ -7083,11 +7079,10 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                                "纯倍数比较，不构成买卖建议。")
                     peers = bench.get('peers')
                     if peers is not None and hasattr(peers, 'empty') and not peers.empty:
-                        with st.expander("查看同业成分股原始倍数明细（真实抓取）"):
+                        with st.expander("查看同业成分股原始倍数明细"):
                             st.dataframe(peers, width="stretch")
                 else:
-                    st.warning("⚠️ 同行业成分股估值基准真实数据缺失（行业分类未匹配或行情接口限流）。"
-                               "本站不使用 PE=20x 这类写死常量兜底，因此此处留空。")
+                    st.warning("⚠️ 同行业成分股估值基准数据缺失（行业分类未匹配或行情接口限流）。")
 
             # =====================================================================
             # Tab 3：机构与资金追踪 —— 十大流通股东持仓（此前误挂在tab1）+ 机构调研记录
@@ -7113,10 +7108,9 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False,
                     )
                     st.plotly_chart(fig_inst, width="stretch", config={'displayModeBar': False})
-                    st.caption(f"📌 数据来源：{st_prof.get('inst_source') or '公开披露接口'}（真实抓取，非编造）。")
+                    st.caption(f"📌 数据来源：{st_prof.get('inst_source') or '公开披露接口'}。")
                 else:
-                    st.warning("⚠️ 监管未披露或接口限流，真实数据缺失 —— 该标的的机构/十大股东持仓无法获取。"
-                               "本站绝不使用虚构股东名单或占位图表。")
+                    st.warning("⚠️ 监管未披露或接口限流，数据缺失 —— 该标的的机构/十大股东持仓无法获取。")
                     if st_prof.get('inst_error'):
                         with st.expander("查看各接口降级尝试的失败明细（便于排查）"):
                             st.code(str(st_prof['inst_error']))
@@ -7144,7 +7138,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         st.dataframe(df_display.head(50), width="stretch")
                         st.caption(f"📌 数据来源：{surveys.get('source')}")
                     else:
-                        st.warning("⚠️ 监管未披露或接口限流，真实数据缺失 —— 未取得该标的近 120 日机构调研记录。")
+                        st.warning("⚠️ 监管未披露或接口限流，数据缺失 —— 未取得该标的近 120 日机构调研记录。")
                         if surveys.get('error'):
                             with st.expander("查看接口降级尝试明细"):
                                 st.code(str(surveys['error']))
