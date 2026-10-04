@@ -11,12 +11,15 @@ python evals/run_evals.py          # 18 offline tests, no network, about 5 secon
 python evals/eval_split_fix.py     # price convention experiment, needs internet, about 3 minutes
 ```
 
-The guardrail eval needs an LLM key:
+The guardrail eval needs an LLM key. Set one of the two:
 
 ```powershell
-$env:OPENROUTER_API_KEY = "sk-or-..."
+$env:OPENROUTER_API_KEY = "sk-or-..."   # OpenRouter, uses GPT 4o like the live report
+$env:ZHIPU_API_KEY = "xxxx.yyyy"         # Zhipu, uses glm-4-flash
 python evals/eval_guardrail.py
 ```
+
+The script prints which provider and model it used, and the results file records the model, so a result is always tied to the model it tested.
 
 ## Offline unit tests — 18 of 18 pass
 

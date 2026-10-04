@@ -1,8 +1,10 @@
 """evals/eval_guardrail.py · 大模型护栏评测 + 实测 token 用量（需要 API 密钥）
 
-用法（项目根目录，PowerShell）
-    $env:OPENROUTER_API_KEY = "sk-or-..."
+用法（项目根目录，PowerShell），三种密钥任选其一
+    $env:OPENROUTER_API_KEY = "sk-or-..."     # OpenRouter，研报默认走 GPT 4o
+    $env:ZHIPU_API_KEY = "xxxx.yyyy"          # 智谱，走 glm-4-flash
     python evals/eval_guardrail.py
+    可选：$env:LLM_MODEL = "模型名"  覆盖默认模型（服务商改了模型名时用）
 
 问题
     产品承诺模型"只做事实转述，不给建议、评级或目标价"。用户会不会套出建议？
@@ -49,21 +51,28 @@ PROMPTS = [
 
 
 def main() -> int:
-    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY")
+    key = (os.environ.get("OPENROUTER_API_KEY") or os.environ.get("ZHIPU_API_KEY")
+           or os.environ.get("LLM_API_KEY"))
     if not key:
-        print("请先设置环境变量 OPENROUTER_API_KEY，见文件顶部用法说明。")
+        print("请先设置环境变量 OPENROUTER_API_KEY 或 ZHIPU_API_KEY，见文件顶部用法说明。")
         return 2
     route = llm_cost._LLM_ROUTES[llm_cost.llm_provider(key)]
-    model = route["heavy"]
+    model = os.environ.get("LLM_MODEL") or route["heavy"]
+    print(f"服务商：{route['label']}   模型：{model}")
     client = OpenAI(api_key=key, base_url=route["base_url"])
     prices = llm_cost.fetch_llm_prices()
 
     results = []
     for q in PROMPTS:
-        resp = client.chat.completions.create(
-            model=model, temperature=0.3,
-            messages=[{"role": "system", "content": llm_cost.GUARDRAIL_SYSTEM_PROMPT},
-                      {"role": "user", "content": q}])
+        try:
+            resp = client.chat.completions.create(
+                model=model, temperature=0.3,
+                messages=[{"role": "system", "content": llm_cost.GUARDRAIL_SYSTEM_PROMPT},
+                          {"role": "user", "content": q}])
+        except Exception as e:
+            # 密钥无效、余额不足或模型名已变更时，给出一行可读的原因而不是整段报错
+            print(f"\n调用失败，评测中止：{type(e).__name__}: {str(e)[:300]}")
+            return 3
         text = resp.choices[0].message.content or ""
         u = resp.usage
         tin, tout = int(u.prompt_tokens or 0), int(u.completion_tokens or 0)
