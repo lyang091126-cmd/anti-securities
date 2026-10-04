@@ -8,6 +8,7 @@
 #   scorecard.py    分析师目标价准确度记分卡（核心算法）   （无 Streamlit 依赖）
 #   llm_cost.py     大模型路由、单价、成本算术、护栏检测   （无 Streamlit 依赖）
 #   snapshot.py     云端被 Yahoo 限流时改读 data/snapshots/ 的带日期快照
+#   report_prompt.py 两个大模型入口的提示词构造（研报、快讯解读），评测共用
 #
 # 页面自上而下的执行顺序（Streamlit 按代码顺序渲染）：
 #   1. 顶部：标题栏 → 实时快讯带 render_live_ribbon → 搜索框 / API 密钥 / 生成按钮
@@ -54,6 +55,8 @@ import snapshot
 from market_data import sf, _median_mean
 from scorecard import ANALYST_TRACK_HORIZON, ANALYST_TRACK_MIN_CALLS, summarize_firm_accuracy
 from llm_cost import _LLM_ROUTES, _PRICE_ID, llm_provider
+import report_prompt
+from report_prompt import fmt_price_val
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -794,7 +797,7 @@ def compute_valuation_percentile(ticker: str, years: int = 3) -> dict:
 # 战役三专用模块：高密度 Grid 布局 + 暗黑专业质感 + 语义化色彩规范。
 #
 # 对外能力：
-#   inject_terminal_css()          全局极窄边距 + 卡片化视觉系统（一次性注入）
+#   inject_terminal_css()          全局极窄边距 + 卡片化视觉系统（每次重跑都注入）
 #   render_command_center()        顶部 4×N 数据仪表盘矩阵（含估值分位迷你进度条）
 #   render_kpi_grid()             通用高密度 KPI 卡片矩阵
 #   build_pro_kline_chart()        专业级 K 线：多均线(含 MA120/MA250 牛熊线)+量+MACD+RSI
@@ -822,9 +825,8 @@ PLOT_BG = "rgba(0,0,0,0)"
 # 1. 全局 CSS：极窄边距 + 高密度卡片
 # ===========================================================================
 def inject_terminal_css():
-    if st.session_state.get("_v7_css_injected"):
-        return
-    st.session_state["_v7_css_injected"] = True
+    # 每次重跑都必须重新下发：Streamlit 会删除本轮没有再次输出的元素。
+    # 旧版用 session_state 只注入一次，换一只股票后整页样式随之消失。
     st.html(f"""
 <style>
 /* ---------- V8 全局底色：深海军蓝，彻底废弃纯黑 ---------- */
@@ -1280,7 +1282,7 @@ def render_command_center(name, ticker, info, hist, percentile_info=None, adv=No
              sub=(f"{wk_lo:,.2f} ~ {wk_hi:,.2f}" if (wk_hi and wk_lo) else "52 周高低缺失"),
              percentile=wk_pos),
         dict(label="近 3 年股价分位", value=(f"{p_pct:.0f}%" if p_pct is not None else "数据缺失"),
-             sub=("客观统计分位，非估值判断" if p_pct is not None else
+             sub=("按近 3 年收盘价计算" if p_pct is not None else
                   (percentile_info or {}).get("error") or "历史数据缺失"),
              percentile=p_pct),
     ]
@@ -2292,7 +2294,7 @@ def get_market_tape_ui(used_key=""):
     
     with st.container(height=600):
         st.markdown("### 📡 全市场实时盘口 (财联社全球快讯)")
-        st.markdown("<div style='font-size:0.85rem; opacity:0.8;'>此模块实时抓取财联社最新电报，并可通过 AI 提取客观事件影响，绝不提供买卖建议。</div><br>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:0.85rem; opacity:0.8;'>此模块实时抓取财联社最新电报，并可通过 AI 提取客观事件影响。</div><br>", unsafe_allow_html=True)
         
         with st.spinner("正在同步全球快讯..."):
             news_list = fetch_cls_news()
@@ -2349,22 +2351,10 @@ def get_market_tape_ui(used_key=""):
                         else:
                             with st.spinner("AI 正在客观分析事件影响与涉及标的..."):
                                 try:
-                                    prompt = f"""
-请作为一位中立的金融数据分析师，深度且客观地解读以下快讯。
-【核心规则】：
-绝对不允许生成任何投资建议、买入/卖出评级或目标价预测。只提取客观事实与直接的产业逻辑。
-
-【快讯内容】：
-{title}
-{content}
-
-【请按以下格式输出】：
-**1. 事件定性**：(如：产业并购、财报超预期、宏观政策利好等)
-**2. 涉及板块/标的**：(直接相关的行业板块或股票名称，如：星网锐捷、通信设备)
-**3. 客观影响链条**：(简要分析该事件对产业链上下游或公司基本面的客观影响，不带主观情绪预测)
-"""
+                                    prompt = report_prompt.build_news_explain_prompt(title, content)
                                     st.session_state[res_key] = llm_chat(
-                                        used_key, [{"role": "user", "content": prompt}],
+                                        used_key, [{"role": "system", "content": llm_cost.GUARDRAIL_SYSTEM_PROMPT},
+                                                   {"role": "user", "content": prompt}],
                                         tier="light", temperature=0.1, purpose="快讯解读")
                                 except Exception as e:
                                     st.error(f"AI 调用失败: {e}")
@@ -2646,12 +2636,11 @@ def get_crowdsource_ui(api_key, ticker, all_data=None):
                  sub=(f"预测营收 × 同业 PS {ref_ps:.2f}x" if ref_ps else "无真实同业 PS，不推演")),
             dict(label="中性情景相对现价",
                  value=(f"{(base_mid - price)/price*100:+.1f}%" if (price and base_mid) else "数据缺失"),
-                 sub="纯倍数推演差值，非目标价推荐",
+                 sub="纯倍数推演差值",
                  direction=("up" if base_mid >= price else "down") if (price and base_mid) else "neutral",
                  value_direction=("up" if base_mid >= price else "down") if (price and base_mid) else None),
         ], cols=3)
-        st.caption("📌 以上均为「用户输入的财务预测 × 同业实时倍数」的机械算术结果，"
-                   "既非本站目标价，也不构成任何投资建议。")
+        st.caption("📌 以上均为「用户输入的财务预测 × 同业实时倍数」的机械算术结果。")
     else:
         st.warning("⚠️ 同行业 PE/PB/PS 基准数据缺失，估值推演器暂时无法给出倍数法结果。")
 
@@ -3746,10 +3735,9 @@ st.markdown(f"""
         </span>
         <span class="bb-label">V12 · Bloomberg Edition</span>
     </div>
-    <div class="bb-label-mute">客观数据聚合引擎 · 全球市场主线 · 零主观预测</div>
+    <div class="bb-label-mute">客观数据聚合引擎 · 全球市场主线</div>
 </div>
 """, unsafe_allow_html=True)
-st.caption("⚠️ 本终端仅做客观公开数据聚合与可视化，绝不生成任何投资评级、目标价推荐或仓位建议。")
 
 # V12：导航栏下方实时快讯带
 try:
@@ -4196,7 +4184,6 @@ def render_rates_monitor():
     fx = fetch_cny_fx()
 
     st.markdown("### 🏦 资金面与利率监控室 <span style='font-size:0.78rem; opacity:0.6;'>(利率 = 股票估值的分母 · 对标固收资金面日报)</span>", unsafe_allow_html=True)
-    st.caption("利率传导说明为客观机制描述，不构成任何利率或行情预测。")
 
     # ===== 主视觉：利率四联快览（V12） =====
     # 旧版用 st.columns([1.35,1,1], vertical_alignment="center") 分三列：左列一张大卡、
@@ -4361,13 +4348,12 @@ def render_rates_monitor():
             f'<div class="ana-note">💱 区间内中间价高点 <b>{_fx_hi:.4f}</b>、低点 <b>{_fx_lo:.4f}</b>，'
             f'最新 <b>{fx["rate"]:.4f}</b>，区间累计变动 <b>{_fx_amp:+.0f} 基点</b>'
             f'（直接标价法下数值上行即人民币贬值）。客观传导机制：中美利差走阔 → 套息资金外流压力 → '
-            f'人民币承压；汇率贬值预期又会通过外资持仓成本影响 A 股/港股定价。'
-            f'以上为机制描述，不构成任何汇率或行情预测。</div>', unsafe_allow_html=True)
+            f'人民币承压；汇率贬值预期又会通过外资持仓成本影响 A 股/港股定价。</div>', unsafe_allow_html=True)
     elif fx is None:
         st.info("人民币汇率（央行中间价）数据缺失。")
 
     # ===== 利率 → 估值分母传导说明 =====
-    st.markdown('<div class="ana-note">🔗 <b>利率与你的持仓的关系（客观传导框架）</b>：无风险利率是 DCF 估值的分母起点——利率下行降低折现率、抬升远期现金流的现值，高久期成长资产（高 PE、盈利后置）估值弹性最大；利率上行则反向。10Y 国债的边际变动对成长股合理 PE 的影响显著大于对低 PE 价值股。本监控室的所有说明均为机制描述，不构成任何利率走势或买卖判断。</div>', unsafe_allow_html=True)
+    st.markdown('<div class="ana-note">🔗 <b>利率与你的持仓的关系（客观传导框架）</b>：无风险利率是 DCF 估值的分母起点——利率下行降低折现率、抬升远期现金流的现值，高久期成长资产（高 PE、盈利后置）估值弹性最大；利率上行则反向。10Y 国债的边际变动对成长股合理 PE 的影响显著大于对低 PE 价值股。</div>', unsafe_allow_html=True)
 
 
 try:
@@ -4521,13 +4507,13 @@ def _macro_impact_text(title: str) -> str:
         import re as _re
         if _re.search(pats, title, flags=_re.I):
             return text
-    return "重大宏观事件。客观影响框架：实际数据/结果与市场事前预期的差值 → 资产价格重定价；事件前隐含波动率通常抬升，事件后回落。本描述仅为客观传导链条，不含方向性判断。"
+    return "重大宏观事件。客观影响框架：实际数据/结果与市场事前预期的差值 → 资产价格重定价；事件前隐含波动率通常抬升，事件后回落。"
 
 
 def render_macro_calendar():
     evs = fetch_macro_calendar_events()
     st.markdown("### 🗓️ 宏观大事日历 <span style='font-size:0.78rem; opacity:0.6;'>(未来 7 天 · 事件驱动核心参考)</span>", unsafe_allow_html=True)
-    st.caption("对标华尔街见闻/金十数据的事件驱动视角：左栏选择事件，右栏查看客观数据与影响链条。仅客观聚合，不构成任何投资建议。")
+    st.caption("对标华尔街见闻/金十数据的事件驱动视角：左栏选择事件，右栏查看客观数据与影响链条。")
 
     cal_c1, cal_c2 = st.columns([1, 2], vertical_alignment="top")
     # 两栏放进等高边框：旧版左侧事件列表比右侧详情长约 213px，下沿错开
@@ -4627,13 +4613,12 @@ def render_macro_calendar():
 <div class="mcal-src">{ev['detail']} · 来源：{ev['source']}</div>
 </div>
 """, unsafe_allow_html=True)
-            st.markdown("#### 🔗 客观影响链条（规则库生成 · 无方向性判断）")
+            st.markdown("#### 🔗 客观影响链条（规则库生成）")
             st.markdown(f"<div style='background:#171B26; border:1px solid #2B3139; border-radius:12px; padding:16px; font-size:0.9rem; line-height:1.8; color:#D1D4DC;'>{_macro_impact_text(ev['title'])}</div>", unsafe_allow_html=True)
             # V10：动态关联当前关注标的——事件传导链条落到用户正在研究的标的上
             _cur_tk = st.session_state.get("selected_ticker", "")
             if _cur_tk:
                 st.caption(f"🎯 当前关注标的：{_cur_tk} —— 上述传导机制同样作用于该标的所处板块（盈利预期/估值分母/资金面三通道），具体弹性取决于其行业属性与财报披露节奏。")
-            st.caption("⚠️ 以上为事件类别的客观传导机制描述，非行情预测；数据请以官方发布为准。")
         else:
             st.info("暂无宏观事件数据。")
 
@@ -4661,39 +4646,6 @@ ticker_input, mapped_name = resolve_ticker(user_ticker_raw)
 risk_preference = "稳健型"
 
 
-def fmt_price_val(val, currency=""):
-    """按币种标准化价格显示。
-
-    V12 修正：旧实现为 `if currency in ["USD","$"] or val < 1000: return f"${val}"`,
-    那个 `or val < 1000` 会把**任何低于 1000 的 A 股价格都标成美元**
-    （招商银行 35.20 元 → "$35.20"）。绝大多数 A 股都在 1000 以下，
-    等于全站币种系统性标错，对金融终端属于硬性错误。
-    现改为严格按 currency 字段判定，绝不用数值大小猜币种。
-
-    口径：美元前置符号（$120.50）；人民币 / 港币后置单位（1,250.00 元 / 23.50 港元）。
-    """
-    if not (isinstance(val, (int, float)) and not isinstance(val, bool)):
-        return "N/A"
-    try:
-        if np.isnan(val) or np.isinf(val):
-            return "N/A"
-    except (TypeError, ValueError):
-        return "N/A"
-    cur = str(currency or "").strip().upper()
-    if cur in ("USD", "$"):
-        return f"${val:,.2f}"
-    if cur in ("HKD", "HK$"):
-        return f"{val:,.2f} 港元"
-    if cur in ("CNY", "RMB", "CNH", "¥", "￥"):
-        return f"{val:,.2f} 元"
-    if cur in ("EUR", "€"):
-        return f"€{val:,.2f}"
-    if cur in ("JPY", "¥JP"):
-        return f"¥{val:,.0f}"
-    if not cur:
-        # 币种未知时不臆测符号，只给数值——错误的货币符号比没有符号更危险
-        return f"{val:,.2f}"
-    return f"{val:,.2f} {cur}"
 
 
 def render_target_band(low, mean, high, cur_price, currency="", n_analysts=None):
@@ -4756,7 +4708,7 @@ def render_target_band(low, mean, high, cur_price, currency="", n_analysts=None)
         f'  {gap_txt}</div>'
         f'<div style="font-size:0.7rem;opacity:0.55;margin-top:8px;line-height:1.6;">'
         f'数据来源：yfinance 分析师一致预期（历史事实记录）。'
-        f'带宽仅呈现第三方预期分布区间，不构成任何投资建议。</div>')
+        f'带宽为第三方预期的分布区间。</div>')
 
 
 def render_analyst_accuracy(ticker: str, currency: str = ""):
@@ -4837,8 +4789,7 @@ def render_analyst_accuracy(ticker: str, currency: str = ""):
         f"（约 12 个月，对应卖方目标价惯用前瞻期）的收盘价为终点判定，"
         f"看多观点需实际价 ≥ 目标价、看空观点需 ≤ 目标价方记命中；未满期的观点一律不计分。"
         f"历史目标价已按发布日之后的累计拆股比例折算，"
-        f"以消除「复权价 vs 未复权目标价」造成的系统性误判。"
-        f"本记分卡仅陈述历史兑现情况，不构成任何投资建议。")
+        f"以消除「复权价 vs 未复权目标价」造成的系统性误判。")
 
 
 
@@ -5126,7 +5077,7 @@ def analyze_kline_and_chanlun(df):
         '<div style="background:rgba(11, 17, 32, 0.55); border:1px solid rgba(255,255,255,0.08); '
         'border-radius:10px; padding:14px 16px; font-size:0.85rem; line-height:1.9; color:#D1D4DC;">'
         + "".join(p for p in _n_parts if p)
-        + '<div style="font-size:0.72rem; opacity:0.6; margin-top:8px;">以上为量化指标的客观串联描述，不构成任何投资建议。</div></div>'
+        + '</div>'
     )
 
     html = f"""<div style="background:rgba(30, 41, 59, 0.7); padding:20px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px);">
@@ -5605,17 +5556,7 @@ if ticker_input:
         industry = info.get("industry") or mapped_name or "N/A"
         sector = info.get("sector") or "N/A"
 
-        summary_data = f"""
-        - 代码/名称: {ticker_input} ({info.get('shortName', mapped_name or ticker_input)})
-        - 当前价格: {current_price_str}
-        - 行业板块: {sector} / {industry}
-        - 市盈率 (PE TTM): {pe_str}
-        - 总市值: {cap_str}
-        - 营收增速: {rev_str}
-        - 52周高/低: {info.get('fiftyTwoWeekHigh', 'N/A')} / {info.get('fiftyTwoWeekLow', 'N/A')}
-        - 毛利率: {info.get('grossMargins', 'N/A')}
-        - ROE: {info.get('returnOnEquity', 'N/A')}
-        """
+        summary_data = report_prompt.build_summary_block(ticker_input, info, hist_1y, mapped_name)
 
         st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
 
@@ -5635,18 +5576,7 @@ if generate_btn:
         status_box = st.status(f"🚀 **正在为 [{ticker_input}] 采集与整理客观数据...**", expanded=True)
         with status_box:
             st.write("🔍 **步骤 1/5: 读取多源新闻快讯...**")
-            news_for_prompt = ""
-            yf_news = all_data.get('news', []) if all_data else []
-            ak_news = all_data.get('ak_news') if all_data else None
-            for n in yf_news[:5]:
-                news_for_prompt += f"- [{n.get('publisher', '')}] {n.get('title', '')}\n"
-            if ak_news is not None and not ak_news.empty:
-                for _, row in ak_news.head(5).iterrows():
-                    title = row.get('新闻标题', '')
-                    source = row.get('文章来源', '东方财富')
-                    news_for_prompt += f"- [{source}] {title}\n"
-            if not news_for_prompt:
-                news_for_prompt = "暂未通过接口读取到近期个股新闻。"
+            news_for_prompt = report_prompt.build_news_block(all_data)
             time.sleep(0.3)
 
             st.write("📊 **步骤 2/5: 读取近1年 K 线与财务报表数据**")
@@ -5657,79 +5587,15 @@ if generate_btn:
             time.sleep(0.3)
 
             st.write("🎯 **步骤 4/5: 第三方分析师历史数据与机构持仓解析**")
-            analyst_data = ""
-            targets = all_data.get('analyst_targets')
-            currency = all_data['info'].get('currency', '')
-            if isinstance(targets, dict) and targets:
-                analyst_data += f"第三方分析师目标价(历史事实): 当前={fmt_price_val(targets.get('current'), currency)}, 均值={fmt_price_val(targets.get('mean'), currency)}, 中位={fmt_price_val(targets.get('median'), currency)}, 最高={fmt_price_val(targets.get('high'), currency)}, 最低={fmt_price_val(targets.get('low'), currency)}\n"
-            recs = all_data.get('recommendations')
-            if recs is not None and not recs.empty:
-                latest = recs.iloc[0]
-                analyst_data += f"最新评级人数分布(第三方历史事实): 强烈推荐={latest.get('strongBuy',0)}, 买入={latest.get('buy',0)}, 持有={latest.get('hold',0)}, 卖出={latest.get('sell',0)}\n"
-            ak_forecast = all_data.get('ak_forecast')
-            if ak_forecast is not None and not ak_forecast.empty:
-                analyst_data += f"东方财富盈利预测一致预期(第三方历史事实):\n{ak_forecast.head(5).to_string()}\n"
-            inst = all_data.get('institutional_holders')
-            if inst is not None and not inst.empty:
-                analyst_data += f"机构持仓Top5(第三方历史事实):\n{inst.head(5).to_string()}\n"
-            if not analyst_data:
-                analyst_data = "暂未读取到第三方分析师预期数据。"
+            analyst_data = report_prompt.build_analyst_block(all_data)
             time.sleep(0.3)
 
             st.write("📝 **步骤 5/5: 合成客观数据摘要报告...**")
             time.sleep(0.2)
 
         # ⚠️ v2.0 重新定位：LLM 仅做"客观事实摘要与翻译"，不生成投资评级/目标价/仓位建议。
-        prompt = f"""
-你是一名严格的财经信息摘要助手。请针对股票 **{ticker_input}**，基于以下真实抓取的客观数据，撰写一份**纯粹事实性摘要报告**。
-
-【核心要求（严格遵守，违反视为任务失败）】
-1. 绝对不允许生成任何投资评级（如"买入"/"增持"/"强烈推荐"）、目标价推荐、仓位配置建议。
-2. 绝对不允许编造未在下方数据中出现的具体数字（如营收、利润、目标价）。数据缺失时必须明确写"数据缺失"。
-3. 新闻摘要只做"客观事实压缩转述"，不做"这对股价意味着什么"的预测性判断；如需分类事件性质，只能用"正面/负面/中性事件描述"这种基于新闻内容本身的客观分类，不能用"利好/利空"这类带交易暗示的词。
-4. 所有内容必须标注来源（如"来源：yfinance"/"来源：akshare"/"第三方机构历史观点，非本报告判断"）。
-
-【基础行情与财务数据】
-{summary_data}
-
-【多源新闻快讯】
-{news_for_prompt}
-
-【近1年K线量化与缠论指标（程序计算）】
-{chanlun_text}
-
-【第三方分析师历史数据与机构持仓（真实抓取，历史事实）】
-{analyst_data}
-
----
-
-### 【报告大纲（仅做客观陈述，不做结论性判断）】
-
-#### 一、 基础数据客观摘要
-- 1.1 行情与估值数据的客观陈述（严禁编造，缺失写"数据缺失"）
-- 1.2 第三方分析师评级人数分布与目标价历史区间（明确标注"第三方历史观点，非本报告判断"）
-
-#### 二、 产业链上下游客观描述
-- 2.1 已知的上下游合作方/客户群体（如有真实数据支持）
-- 2.2 若无法获取真实产业链数据，请明确写"数据缺失，无法提供具体产业链细节"
-
-#### 三、 主营业务客观描述
-- 3.1 主营业务与产品线（基于真实数据，缺失写"数据缺失"）
-- 3.2 同行业上市公司列表（仅在能验证真实性时列出，否则写"数据缺失，无法提供可验证的同行对比"）
-
-#### 四、 缠论技术面数据摘要
-- 4.1 直接转述程序计算出的顶底分型、中枢区间、MACD背驰结果（不做买卖点推荐）
-
-#### 五、 财务数据客观摘要
-- 5.1 财务核心指标客观陈述（严禁编造，缺失写"数据缺失"）
-- 5.2 第三方分析师EPS/营收增速预测（标注"第三方历史观点"）
-
-#### 六、 事件与关注变量
-- 6.1 已知的真实公司专属事件（如财报日期）
-- 6.2 新闻事件性质客观分类（正面/负面/中性事件描述，不做利好利空判断）
-
-**输出要求**: 使用规范 Markdown 格式，语言客观克制，禁止使用任何带有引导性/结论性的投资建议措辞。
-"""
+        prompt = report_prompt.build_report_prompt(
+            ticker_input, summary_data, news_for_prompt, chanlun_text, analyst_data)
 
         try:
             ai_reply = llm_chat(
@@ -5764,7 +5630,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
     # ===== V7 战役三：核心指挥中心（4×N 高密度矩阵，1 秒读盘）=====
     section_bar(
         f"⌘ COMMAND CENTER · {info.get('shortName') or mapped_name or ticker_input} ({ticker_input})",
-        "缺失字段标注「数据缺失」 · 不构成投资建议",
+        "缺失字段标注「数据缺失」",
     )
     try:
         render_command_center(
@@ -5842,7 +5708,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     plot_bgcolor='rgba(0,0,0,0)'
                 )
                 st.plotly_chart(fig_radar, width="stretch", config={'displayModeBar': False})
-                st.caption("📌 五维评分由财务数据按固定公式归一化到0-100，不代表投资建议。")
+                st.caption("📌 五维评分由财务数据按固定公式归一化到0-100。")
 
             # V12：改用 st.container(border=True) 真正包裹内容。旧版用两次独立的
             # st.markdown 分别输出 <div> 与 </div>，Streamlit 会把每次调用渲染成
@@ -5880,7 +5746,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
             # ===== V9 P1/P2 右栏：第三方分析师评级分布（原 Tab1 底部独立行，上移填补空白） =====
             with exec_c3, st.container(border=True, height=EXEC_CARD_H):
                 st.markdown("#### 📊 第三方分析师评级分布")
-                st.markdown('<span class="badge-neutral">yfinance 历史评级记录 · 不构成投资建议</span>', unsafe_allow_html=True)
+                st.markdown('<span class="badge-neutral">yfinance 历史评级记录</span>', unsafe_allow_html=True)
                 st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
 
                 recs_df_top = all_data.get('recommendations')
@@ -5950,7 +5816,6 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
             # =====================================================================
             with tab1:
                 st.markdown(f'<div style="text-align:center; font-size:1.2rem; font-weight:800; margin-bottom:1.0rem;">📌 【{s_title_name}】 客观数据总览</div>', unsafe_allow_html=True)
-                st.caption("⚠️ 以下均为第三方数据源（yfinance/akshare）的客观历史记录，不构成、也不包含本站任何投资建议、评级、目标价推荐或仓位建议。")
 
                 # V9 P1/P2：分析师评级分布已上移至 Executive Summary 右栏（exec_c3），
                 # 此处不再重复渲染，Tab1 直接进入产业链图谱与主营业务构成。
@@ -6044,7 +5909,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                 with c4_a, st.container(height=690, border=False):
                     # 固定高度与右侧 660px 的 K 线图加图注对齐；文字超长时在框内滚动
                     st.markdown("### 📈 缠论技术面数据摘要", unsafe_allow_html=True)
-                    st.caption("⚠️ 简化版分型/中枢识别 + RSI + BOLL，非买卖点建议")
+                    st.caption("简化版分型/中枢识别 + RSI + BOLL")
                     chanlun_text_ui = analyze_kline_and_chanlun(all_data['hist_1y']) if all_data and all_data.get('hist_1y') is not None else "暂无K线数据"
                     st.markdown(chanlun_text_ui, unsafe_allow_html=True)
                 with c4_b:
@@ -6059,7 +5924,6 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
 
             with tab2:
                 st.markdown(f'<div style="text-align:center; font-size:1.2rem; font-weight:800; margin-bottom:0.6rem;">📊 【{s_title_name}】 财报与估值穿透</div>', unsafe_allow_html=True)
-                st.caption("⚠️ 以下均为第三方数据源的客观历史记录与统计计算，不构成估值结论或投资建议。")
 
                 st.markdown("#### 📐 股价历史区间分位（近3年，客观统计）")
                 hist_long = fetch_price_history_long(ticker_input, years=3)
@@ -6358,8 +6222,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                         ("PB 水位差", cur_pb, bench.get('pb')),
                         ("PS 水位差", cur_ps, bench.get('ps')),
                     ])
-                    st.caption("📌 进度条中轴为同业实时中位数；向右(红)代表相对溢价，向左(绿)代表相对折价；"
-                               "纯倍数比较，不构成买卖建议。")
+                    st.caption("📌 进度条中轴为同业实时中位数；向右(红)代表相对溢价，向左(绿)代表相对折价。")
                     peers = bench.get('peers')
                     if peers is not None and hasattr(peers, 'empty') and not peers.empty:
                         with st.expander("查看同业成分股原始倍数明细"):
@@ -6447,14 +6310,14 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     ak_news = all_data.get('ak_news') if all_data else None
 
                     for n in yf_news[:8]:
-                        all_news_items.append({'title': n.get('title', ''), 'source': n.get('publisher', '')})
+                        all_news_items.append({'title': report_prompt.news_title(n), 'source': report_prompt.news_source(n)})
                     if ak_news is not None and not ak_news.empty:
                         for _, row in ak_news.head(10).iterrows():
                             all_news_items.append({'title': row.get('新闻标题', ''), 'source': row.get('文章来源', '东方财富')})
                     for item in all_news_items:
                         t = item['title'].lower()
                         if any(kw in t for kw in positive_kw):
-                            st.markdown(f'<div class="news-positive"><div class="news-title">📈 {item["title"]}</div><div class="news-meta">来源: {item["source"]} | 事件性质：正面描述（非预测）</div></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="news-positive"><div class="news-title">📈 {item["title"]}</div><div class="news-meta">来源: {item["source"]} | 事件性质：正面描述</div></div>', unsafe_allow_html=True)
                             found_positive = True
                     if not found_positive:
                         st.markdown('<div class="news-positive"><div class="news-title">暂未识别到明确正面性质事件</div></div>', unsafe_allow_html=True)
@@ -6465,7 +6328,7 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
                     for item in all_news_items:
                         t = item['title'].lower()
                         if any(kw in t for kw in negative_kw):
-                            st.markdown(f'<div class="news-negative"><div class="news-title">📉 {item["title"]}</div><div class="news-meta">来源: {item["source"]} | 事件性质：负面描述（非预测）</div></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="news-negative"><div class="news-title">📉 {item["title"]}</div><div class="news-meta">来源: {item["source"]} | 事件性质：负面描述</div></div>', unsafe_allow_html=True)
                             found_negative = True
                     if not found_negative:
                         st.markdown('<div class="news-neutral"><div class="news-title">暂未识别到明确负面性质事件</div></div>', unsafe_allow_html=True)
@@ -6481,7 +6344,6 @@ if ticker_input and all_data and all_data.get('hist_1y') is not None:
 
     st.markdown('<div class="spacer-lg"></div>', unsafe_allow_html=True)
     st.markdown("---")
-    st.caption("⚠️ 免责声明：本工具仅做公开数据的客观聚合与可视化展示，所有内容（包括AI生成的摘要文字）均不构成、也不应被理解为投资建议、评级或目标价推荐。投资有风险，请独立判断并自行承担决策后果。\n")
 
 # 每用户成本面板：放在最末尾，才能计入本次运行中刚发生的大模型调用
 try:

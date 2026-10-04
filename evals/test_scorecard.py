@@ -117,3 +117,12 @@ def test_firm_league_threshold():
     g = scorecard.summarize_firm_accuracy(calls, min_calls=8)
     assert list(g.index) == ["X"], g          # Y 只有 3 条，不进榜
     assert g.loc["X", "命中率"] == 75.0, g
+
+
+def test_china_and_hk_codes_report_no_coverage_without_network():
+    # 即使 yfinance 被替身成"会返回数据"，A 股 / 港股代码也必须直接判为无覆盖
+    px = pd.Series([100.0] * 600, index=DAYS)
+    _install(px, _calls([(10, "A", 150, "Buy")]))
+    for code in ["600519.SS", "000858.SZ", "0700.HK", "430047.BJ"]:
+        r = scorecard.fetch_analyst_track_record(code)
+        assert r["ok"] is False and "无历史机构观点覆盖" in r["reason"], (code, r)

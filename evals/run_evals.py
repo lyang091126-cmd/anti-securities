@@ -20,7 +20,7 @@ sys.path.insert(0, str(HERE))
 def main() -> int:
     passed = failed = 0
     for f in sorted(HERE.glob("test_*.py")):
-        for name in ("scorecard", "llm_cost", "snapshot"):
+        for name in ("scorecard", "llm_cost", "snapshot", "report_prompt"):
             if name in sys.modules:
                 importlib.reload(sys.modules[name])
         mod = importlib.import_module(f.stem)

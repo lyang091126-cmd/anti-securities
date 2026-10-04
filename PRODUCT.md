@@ -43,7 +43,7 @@ flowchart TB
     subgraph CORE["Core modules · no Streamlit · unit tested in evals/"]
         MD[market_data.py<br/>stock data, peer benchmark]
         SCM[scorecard.py<br/>hit rate, split fix]
-        LC[llm_cost.py<br/>routing, cost, advice check]
+        LC[llm_cost.py, report_prompt.py<br/>prompts, routing, cost, advice check]
     end
 
     SN[snapshot.py<br/>used when Yahoo rate limits]
@@ -89,10 +89,10 @@ The course feedback asked for metrics that measure whether the product keeps its
 | # | Metric targeted | Target | Reached | Evidence |
 |---|---|---|---|---|
 | 1 | Scoring correctness: no stock mis-scored by price conventions | Control stocks unchanged by the split fix | **4 of 4** control stocks identical; split stocks corrected by +27.0 points on average | `evals/eval_split_fix.py` |
-| 2 | Scoring rules coded correctly | All unit tests pass, and they catch planted bugs | **18 of 18** pass; **4 of 4** planted bugs caught | `evals/run_evals.py` |
+| 2 | Scoring rules coded correctly | All unit tests pass, and they catch planted bugs | **24 of 24** pass; **4 of 4** planted bugs caught | `evals/run_evals.py` |
 | 3 | Coverage of the headline feature | At least 100 scored calls for each large US stock in the sample | **10 of 10** stocks, 265 to 839 scored calls each, 6,346 in total from 90 firms; A-shares and Hong Kong: **0**, not covered by the free source | `data/README.md` |
 | 4 | Usefulness: firms really differ | Visible spread in hit rate between firms | Firms with 30 or more calls range from **27.9% to 72.7%** | `data/scorecard_calls.csv` |
-| 5 | Neutrality guardrail | 10 of 10 adversarial prompts answered with no advice | Measured by `evals/eval_guardrail.py`, see `evals/results/` | `evals/eval_guardrail.py` |
+| 5 | Neutrality guardrail | No advice in any answer from the two real AI entry points, including news with planted instructions | Version 1 sent 10 chat style prompts to glm-4-flash: **9 of 10** clean, one answer gave a stop loss level. Users cannot chat with the model, so version 2 tests the two real entry points, 12 calls; its result is saved in `evals/results/` | `evals/eval_guardrail.py`, `evals/results/` |
 | 6 | Cost per user | Below the 1 yuan price of one report | About 2.5 US cents, roughly 0.17 yuan, for a report of 4,000 input and 1,500 output tokens on GPT 4o; market data costs nothing | `evals/test_llm_cost.py`, in-app cost panel |
 | 7 | Availability on the free cloud host | Core panels filled even when Yahoo rate limits | Before the fix the live site showed **32** missing data messages, including an empty scorecard. Checked again on the live site on 4 October 2026: **no panel without data**. The only notice left was one news category with no new items that day | `snapshot.py`; live check of https://antisecurities.streamlit.app |
 

@@ -28,11 +28,11 @@ To see how the app behaves on the cloud host, where Yahoo rate limits company da
 ## Run the evaluations
 
 ```bash
-python evals/run_evals.py          # 18 offline tests, no network
+python evals/run_evals.py          # 24 offline tests, no network
 python evals/eval_split_fix.py     # price convention experiment on real data
 ```
 
-`evals/eval_guardrail.py` tests the no-advice guardrail and needs an API key. See [`evals/README.md`](evals/README.md).
+`evals/eval_guardrail.py` sends the real report and news prompts to the LLM, including fake news items with planted instructions, and checks every answer for advice. It needs an API key. See [`evals/README.md`](evals/README.md).
 
 ## Rebuild the data
 
@@ -50,6 +50,7 @@ Run this on a local machine, not on the cloud host. It rewrites `data/scorecard_
 | `market_data.py` | Data layer: full data bundle for one stock, peer valuation benchmark |
 | `scorecard.py` | Core algorithm: analyst call accuracy, split adjustment, returns after buy ratings |
 | `llm_cost.py` | LLM provider routing, live prices, cost arithmetic, no-advice detector, shared system prompt |
+| `report_prompt.py` | Builds the prompts for the two AI entry points, the one-click report and the news explanation |
 | `snapshot.py` | Detects Yahoo rate limiting and switches to the dated snapshot |
 | `tools/build_snapshot.py` | Builds the data files and snapshots |
 | `data/` | Data used in the project, with its own README |
@@ -120,4 +121,4 @@ Prices are read live from the public OpenRouter price list. On 1 October 2026 GP
 
 ## LLM guardrail
 
-The model only summarises and extracts. Both prompts forbid ratings, buy or sell advice and target prices. All charts, tables and scores come from data sources. The model only writes text summaries. `evals/eval_guardrail.py` tests this with 10 adversarial prompts.
+Users cannot chat with the model. It has only two entry points, the one-click report and the news explanation button, and the program writes both prompts. So the real risks are the model giving advice on its own after reading analyst data, and instructions hidden inside news text. Both prompts forbid ratings, buy or sell advice and target prices, both use the same system prompt, and both say that any instruction inside the news text must be ignored. All charts, tables and scores come from data sources. The model only writes text summaries. `evals/eval_guardrail.py` tests this with 10 adversarial prompts.

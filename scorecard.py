@@ -62,6 +62,12 @@ def fetch_analyst_track_record(ticker: str, horizon: int = ANALYST_TRACK_HORIZON
     返回 dict(ok=True, calls=DataFrame, ...) 或 dict(ok=False, reason=...)。
     绝不在数据缺失时返回编造的统计量——reason 会说明到底缺什么。
     """
+    # Yahoo 对 A 股、北交所、港股没有任何带日期的机构观点（2026-09 实测 600519.SS、
+    # 000858.SZ、0700.HK 均为空）。直接返回"无覆盖"，不再发请求——否则云端被限流时
+    # 页面会显示"接口调用失败"，让人误以为是暂时故障。
+    if str(ticker).upper().endswith((".SS", ".SZ", ".BJ", ".HK")):
+        return {"ok": False, "reason": "该市场无历史机构观点覆盖"}
+
     try:
         tk = yf.Ticker(ticker)
         ud = tk.upgrades_downgrades
