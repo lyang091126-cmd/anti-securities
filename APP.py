@@ -21,7 +21,7 @@
 #   4. 页面末尾：AI 用量与每用户成本面板 render_llm_cost_panel
 #
 # 文件中标有"▼▼▼ 内联模块"的段落，是早期独立文件在 V8 合并进来的历史结构，
-# 原始版本存档于 _legacy_modules/，不再运行。
+# 原始版本存档于 archive/legacy_modules/，不再运行。
 # ============================================================================
 from __future__ import annotations
 import os

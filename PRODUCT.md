@@ -30,42 +30,45 @@ Retail investors see analyst ratings and price targets every day in the news and
 ## Architecture
 
 ```mermaid
-flowchart LR
-    U([User]) -->|ticker, optional API key| UI
+flowchart TB
+    U([User types a ticker<br/>and an optional API key])
 
     subgraph APP["APP.py · Streamlit pages"]
-        UI[Search and pages]
-        SC[Scorecard panel]
-        RP[AI report]
+        UI[Stock pages and<br/>market overview]
+        SC[Accuracy scorecard]
+        RP[Neutral AI report]
         CP[Cost panel]
     end
 
-    subgraph CORE["Core modules · no Streamlit, unit tested"]
-        MD[market_data.py<br/>stock bundle, peer benchmark]
-        SCM[scorecard.py<br/>hit rate, split fix, buy returns]
-        LC[llm_cost.py<br/>routing, prices, cost, advice check]
-        SN[snapshot.py<br/>cloud fallback]
+    subgraph CORE["Core modules · no Streamlit · unit tested in evals/"]
+        MD[market_data.py<br/>stock data, peer benchmark]
+        SCM[scorecard.py<br/>hit rate, split fix]
+        LC[llm_cost.py<br/>routing, cost, advice check]
     end
 
-    subgraph EXT["External sources"]
-        YF[(Yahoo Finance<br/>yfinance)]
-        AK[(Eastmoney, Sina, Baidu<br/>akshare)]
-        OR[(OpenRouter price list)]
-        LLM[(LLM: GPT 4o via<br/>OpenRouter / OpenAI / Zhipu)]
+    SN[snapshot.py<br/>used when Yahoo rate limits]
+
+    subgraph EXT["External data and intelligence"]
+        AK[(akshare<br/>Eastmoney, Sina, Baidu)]
+        YF[(Yahoo Finance<br/>prices, analyst calls)]
+        DATA[(data/snapshots<br/>dated real data)]
+        LLM[(LLM via OpenRouter<br/>GPT 4o, GPT 4o mini)]
+        OR[(OpenRouter<br/>price list)]
     end
 
-    DATA[(data/snapshots<br/>dated real data)]
-
-    UI --> MD --> YF
+    U --> UI
+    UI --> MD
+    SC --> SCM
+    RP --> LC
+    CP --> LC
     MD --> AK
-    UI --> SCM --> YF
+    MD --> YF
+    SCM --> YF
     MD -. rate limited .-> SN
     SCM -. rate limited .-> SN
     SN --> DATA
-    RP --> LC --> LLM
+    LC --> LLM
     LC --> OR
-    LC --> CP
-    SC --- SCM
 ```
 
 How an input becomes an output, for the scorecard:
@@ -91,7 +94,7 @@ The course feedback asked for metrics that measure whether the product keeps its
 | 4 | Usefulness: firms really differ | Visible spread in hit rate between firms | Firms with 30 or more calls range from **27.9% to 72.7%** | `data/scorecard_calls.csv` |
 | 5 | Neutrality guardrail | 10 of 10 adversarial prompts answered with no advice | Measured by `evals/eval_guardrail.py`, see `evals/results/` | `evals/eval_guardrail.py` |
 | 6 | Cost per user | Below the 1 yuan price of one report | About 2.5 US cents, roughly 0.17 yuan, for a report of 4,000 input and 1,500 output tokens on GPT 4o; market data costs nothing | `evals/test_llm_cost.py`, in-app cost panel |
-| 7 | Availability on the free cloud host | Core panels filled even when Yahoo rate limits | Missing data messages fell from **32 to 11** in a simulated cloud run: the same 9 as a healthy local run plus 2 notices that snapshot data is shown | `snapshot.py`, local test with `ANTI_FORCE_SNAPSHOT=1` |
+| 7 | Availability on the free cloud host | Core panels filled even when Yahoo rate limits | Before the fix the live site showed **32** missing data messages, including an empty scorecard. Checked again on the live site on 4 October 2026: **no panel without data**. The only notice left was one news category with no new items that day | `snapshot.py`; live check of https://antisecurities.streamlit.app |
 
 ### What these metrics do not show
 

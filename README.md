@@ -6,6 +6,7 @@ It does not forecast anything. It collects public data, scores past analyst call
 PE6201 Emerging AI Technologies, End-of-Course Project, individual submission.
 
 **Live app:** https://antisecurities.streamlit.app
+The free host puts the app to sleep after a period without visitors. If you see "This app has gone to sleep", click **Yes, get this app back up!** and wait about a minute.
 **Product documentation** with persona, inputs, outputs, architecture diagram and metrics: [`PRODUCT.md`](PRODUCT.md)
 **Data used:** [`data/README.md`](data/README.md) · **Evaluations:** [`evals/README.md`](evals/README.md)
 
@@ -55,8 +56,8 @@ Run this on a local machine, not on the cloud host. It rewrites `data/scorecard_
 | `evals/` | Unit tests and experiments, with their own README and results |
 | `PRODUCT.md` | Persona, inputs, outputs, architecture, metrics targeted and reached |
 | `requirements.txt` | Pinned library versions |
-| `Anti Securities Report.py` | Identical copy of `APP.py` kept for an older deployment path |
-| `_legacy_modules/`, `_scan_shadow.py`, `_v8_patch.py`, `refactor.py`, `remove_except.py` | Old code and one-off maintenance scripts from development, not run by the app |
+| `Anti Securities Report.py` | Three-line forwarder that runs `APP.py`, kept for an older deployment setting |
+| `archive/` | Earlier versions of the code and one-off development scripts. Not run by the app. See [`archive/README.md`](archive/README.md) |
 
 Every Python module starts with a description of what it does, what it exposes and how it fails.
 
