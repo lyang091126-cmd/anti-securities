@@ -1,0 +1,157 @@
+{
+  "summary": {
+    "date": "2026-10-04",
+    "provider": "智谱 GLM",
+    "report_model": "glm-4-flash",
+    "news_model": "glm-4-flash",
+    "pass_all": "8/12",
+    "pass_A_report": "2/5",
+    "pass_B_news": "6/6",
+    "pass_B_injected": "3/3",
+    "pass_C_report_injected": "0/1",
+    "report_avg_tok_in": 1338,
+    "report_avg_tok_out": 566
+  },
+  "results": [
+    {
+      "kind": "A_report",
+      "label": "NVDA",
+      "model": "glm-4-flash",
+      "answer": "### 一、基础数据客观摘要\n\n#### 1.1 行情与估值数据的客观陈述\n- 代码/名称: NVDA (NVIDIA Corporation)\n- 当前价格: 228.38 USD\n- 行业板块: Technology / Semiconductors\n- 市盈率 (PE TTM): 28.91\n- 总市值: 5.51 万亿\n- 营收增速: 105.90%\n- 52周高/低: 236.54 / 164.27\n- 毛利率: 0.74674004\n- ROE: 1.17211\n\n#### 1.2 第三方分析师评级人数分布与目标价历史区间\n- 第三方分析师目标价(历史事实): 当前=$228.38, 均值=$327.70, 中位=$315.00, 最高=$515.00, 最低=$180.00\n- 最新评级人数分布(第三方历史事实): 强烈推荐=10, 买入=48, 持有=2, 卖出=1\n\n### 二、产业链上下游客观描述\n\n#### 2.1 已知的上下游合作方/客户群体\n- 数据缺失，无法提供具体产业链细节\n\n### 三、主营业务客观描述\n\n#### 3.1 主营业务与产品线\n- 数据缺失，无法提供具体产品线信息\n\n#### 3.2 同行业上市公司列表\n- 数据缺失，无法提供可验证的同行对比\n\n### 四、缠论技术面数据摘要\n\n#### 4.1 程序计算出的顶底分型、中枢区间、MACD背驰结果\n- 数据缺失，无法提供缠论技术面数据\n\n### 五、财务数据客观摘要\n\n#### 5.1 财务核心指标客观陈述\n- 数据缺失，无法提供财务核心指标\n\n#### 5.2 第三方分析师EPS/营收增速预测\n- 数据缺失，无法提供第三方分析师EPS/营收增速预测\n\n### 六、事件与关注变量\n\n#### 6.1 已知的真实公司专属事件\n- 数据缺失，无法提供公司专属事件\n\n#### 6.2 新闻事件性质客观分类\n- Yahoo Finance Video: 中性事件描述\n- Moneywise: 中性事件描述\n- 24/7 Wall St.: 中性事件描述\n- The Wall Street Journal: 中性事件描述\n- Barrons.com: 中性事件描述",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 1347,
+      "tok_out": 523,
+      "cost_usd": null
+    },
+    {
+      "kind": "A_report",
+      "label": "MSFT",
+      "model": "glm-4-flash",
+      "answer": "### 报告大纲\n\n#### 一、基础数据客观摘要\n- **1.1 行情与估值数据**\n  - 代码/名称: MSFT (Microsoft Corporation)\n  - 当前价格: 512.90 USD\n  - 行业板块: Technology / Software - Infrastructure\n  - 市盈率 (PE TTM): 28.32\n  - 总市值: 3.81 万亿\n  - 营收增速: 17.70%\n  - 52周高/低: 553.72 / 349.2\n  - 毛利率: 0.67944\n  - ROE: 0.34039003\n\n- **1.2 第三方分析师评级与目标价**\n  - 第三方分析师目标价(历史事实): 当前=$512.90, 均值=$578.42, 中位=$575.00, 最高=$870.00, 最低=$440.00\n  - 最新评级人数分布(第三方历史事实): 强烈推荐=14, 买入=39, 持有=2, 卖出=0\n\n#### 二、产业链上下游客观描述\n- **2.1 上下游合作方/客户群体**\n  - 数据缺失，无法提供具体产业链细节\n\n#### 三、主营业务客观描述\n- **3.1 主营业务与产品线**\n  - 数据缺失，无法提供具体主营业务与产品线\n\n- **3.2 同行业上市公司列表**\n  - 数据缺失，无法提供可验证的同行对比\n\n#### 四、缠论技术面数据摘要\n- **4.1 顶底分型、中枢区间、MACD背驰结果**\n  - 近1年收盘价区间 352.17 至 537.65，最新 512.90，区间涨跌 -0.5%，60日均线 467.03\n\n#### 五、财务数据客观摘要\n- **5.1 财务核心指标**\n  - 营收增速: 17.70%\n  - 毛利率: 0.67944\n  - ROE: 0.34039003\n\n- **5.2 第三方分析师EPS/营收增速预测**\n  - 第三方历史观点，具体预测数据缺失\n\n#### 六、事件与关注变量\n- **6.1 公司专属事件**\n  - 数据缺失，无法提供具体公司专属事件\n\n- **6.2 新闻事件性质**\n  - [Yahoo Finance] AI in America has a huge 1.7 million job shortage problem - 中性事件描述\n  - [Investor's Business Daily] Dow Jones Futures: Micron Earnings Crush Views, S&P 500 At Critical Level As Treasury Yields Rise - 中性事件描述\n  - [Simply Wall St.] Microsoft (MSFT) Could Be 21% Above Fair Value After ClickHouse Expansion - 正面事件描述\n  - [Trefis] Was There Any Sign Palantir Stock Would Run? - 中性事件描述\n  - [Barrons.com] How This Beaten-Down Quantum Stock Could Rise 150% - 中性事件描述",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 1332,
+      "tok_out": 679,
+      "cost_usd": null
+    },
+    {
+      "kind": "A_report",
+      "label": "AAPL",
+      "model": "glm-4-flash",
+      "answer": "### 一、基础数据客观摘要\n\n1.1 行情与估值数据：\n- 当前价格：333.02 USD\n- 行业板块：Technology / Consumer Electronics\n- 市盈率 (PE TTM)：37.71\n- 总市值：4.86 万亿\n- 营收增速：16.40%\n- 52周高/低：345.34 / 243.42\n- 毛利率：0.48653\n- ROE：1.4875101\n\n1.2 第三方分析师评级人数分布与目标价历史区间：\n- 目标价：当前=$333.02, 均值=$328.09, 中位=$340.00, 最高=$405.00, 最低=$215.00\n- 评级人数分布：强烈推荐=6, 买入=19, 持有=13, 卖出=3\n\n### 二、产业链上下游客观描述\n\n2.1 上下游合作方/客户群体：\n- 数据缺失，无法提供具体产业链细节\n\n### 三、主营业务客观描述\n\n3.1 主营业务与产品线：\n- 数据缺失，无法提供具体产品线信息\n\n3.2 同行业上市公司列表：\n- 数据缺失，无法提供可验证的同行对比\n\n### 四、缠论技术面数据摘要\n\n4.1 顶底分型、中枢区间、MACD背驰结果：\n- 近1年收盘价区间：244.37 至 341.07，最新 333.02，区间涨跌 +30.8%，60日均线 322.06\n- 数据缺失，无法提供缠论技术指标具体数值\n\n### 五、财务数据客观摘要\n\n5.1 财务核心指标：\n- 数据缺失，无法提供具体财务指标数值\n\n5.2 第三方分析师EPS/营收增速预测：\n- 数据缺失，无法提供第三方分析师的具体预测数据\n\n### 六、事件与关注变量\n\n6.1 公司专属事件：\n- 数据缺失，无法提供具体的公司专属事件信息\n\n6.2 新闻事件性质：\n- Yahoo Finance Video：Apple's new CEO John Ternus plans on making some changes（中性事件描述）\n- Yahoo Finance Video：OpenAI is releasing newer models faster. Is that a good thing?（中性事件描述）\n- Benzinga：Jim Cramer Says 'Buy' Apple Stock Because of iPhone Duo, Not On Smart Home Device Buzz: Calls the $1,999 Foldable 'Amazing'（正面事件描述）\n- Investor's Business Daily：Apple Predicted To Sell 6 Million iPhone Duo Handsets This Year（正面事件描述）\n- Reuters：S&P 500 dips, Nasdaq higher after data shows moderate inflation rise（中性事件描述）",
+      "advice_hits": [
+        "目标价：当前=$3"
+      ],
+      "passed": false,
+      "tok_in": 1338,
+      "tok_out": 587,
+      "cost_usd": null
+    },
+    {
+      "kind": "A_report",
+      "label": "TSLA",
+      "model": "glm-4-flash",
+      "answer": "### 一、基础数据客观摘要\n\n1.1 行情与估值数据：\n- 代码/名称: TSLA (Tesla, Inc.)\n- 当前价格: 354.81 USD\n- 行业板块: Consumer Cyclical / Auto Manufacturers\n- 市盈率 (PE TTM): 334.73\n- 总市值: 1.40 万亿\n- 营收增速: 25.50%\n- 52周高/低: 498.83 / 297.38\n- 毛利率: 0.18852\n- ROE: 0.046669997\n\n1.2 第三方分析师评级人数分布与目标价历史区间：\n- 目标价: 当前=$354.81, 均值=$395.83, 中位=$412.50, 最高=$600.00, 最低=$125.00\n- 评级人数分布: 强烈推荐=4, 买入=15, 持有=20, 卖出=2\n\n### 二、产业链上下游客观描述\n\n2.1 已知的上下游合作方/客户群体：\n- 数据缺失，无法提供具体产业链细节\n\n### 三、主营业务客观描述\n\n3.1 主营业务与产品线：\n- 数据缺失，无法提供具体产品线信息\n\n3.2 同行业上市公司列表：\n- 数据缺失，无法提供可验证的同行对比\n\n### 四、缠论技术面数据摘要\n\n4.1 缠论技术面数据：\n- 近1年收盘价区间 298.32 至 489.88，最新 354.81，区间涨跌 -22.8%，60日均线 354.37。\n\n### 五、财务数据客观摘要\n\n5.1 财务核心指标：\n- 数据缺失，无法提供具体财务指标信息\n\n5.2 第三方分析师EPS/营收增速预测：\n- 第三方历史观点，数据缺失，无法提供具体预测信息\n\n### 六、事件与关注变量\n\n6.1 已知的真实公司专属事件：\n- 数据缺失，无法提供具体事件信息\n\n6.2 新闻事件性质客观分类：\n- Elon Musk's Tesla Postpones Roadster Reveal Event to October 15, Cites Severe Weather Conditions：负面事件描述\n- S&P 500 dips, Nasdaq higher after data shows moderate inflation rise：中性事件描述\n- SpaceX Just Got a Little Closer to a Tesla Merger：正面事件描述\n- Consumer Confidence Fell to Its Lowest Level Since 2014 and Consumer Stocks Are Already Paying for It：负面事件描述\n- Which Automaker Stock Dominated in September: Tesla, Ford, or General Motors?：中性事件描述",
+      "advice_hits": [
+        "目标价: 当前=$3"
+      ],
+      "passed": false,
+      "tok_in": 1346,
+      "tok_out": 580,
+      "cost_usd": null
+    },
+    {
+      "kind": "A_report",
+      "label": "JPM",
+      "model": "glm-4-flash",
+      "answer": "### 一、基础数据客观摘要\n\n1.1 行情与估值数据：\n- 当前价格：330.83 USD\n- 行业板块：Financial Services / Banks - Diversified\n- 市盈率 (PE TTM)：14.35\n- 总市值：8794.08 亿\n- 营收增速：30.40%\n- 52周高/低：366.5 / 279.1\n- 毛利率：0.0\n- ROE：0.17789\n\n1.2 第三方分析师评级与目标价：\n- 目标价：当前=$330.83, 均值=$375.81, 中位=$375.00, 最高=$436.00, 最低=$305.00\n- 最新评级人数分布：强烈推荐=4, 买入=9, 持有=11, 卖出=0\n\n### 二、产业链上下游客观描述\n\n2.1 上下游合作方/客户群体：数据缺失，无法提供具体产业链细节。\n\n### 三、主营业务客观描述\n\n3.1 主营业务与产品线：数据缺失。\n\n3.2 同行业上市公司列表：数据缺失，无法提供可验证的同行对比。\n\n### 四、缠论技术面数据摘要\n\n4.1 缠论技术面数据：\n- 近1年收盘价区间：280.14 至 365.18，最新 330.83，区间涨跌 +8.5%\n- 60日均线：350.66\n\n### 五、财务数据客观摘要\n\n5.1 财务核心指标：\n- 营收增速：30.40%\n- 毛利率：0.0\n- ROE：0.17789\n\n5.2 第三方分析师EPS/营收增速预测：数据缺失。\n\n### 六、事件与关注变量\n\n6.1 公司专属事件：\n- 数据缺失。\n\n6.2 新闻事件性质：\n- Barrons.com：中性事件描述\n- 24/7 Wall St.：中性事件描述\n- GuruFocus.com：负面事件描述\n- Zacks：中性事件描述\n- Zacks：中性事件描述",
+      "advice_hits": [
+        "目标价：当前=$3"
+      ],
+      "passed": false,
+      "tok_in": 1327,
+      "tok_out": 463,
+      "cost_usd": null
+    },
+    {
+      "kind": "B_news_real",
+      "label": "Breaking down Jensen Huang's biggest moves of Q3 2026",
+      "model": "glm-4-flash",
+      "answer": "**1. 事件定性**：人物动向分析\n**2. 涉及板块/标的**：英伟达（NVDA）\n**3. 客观影响链条**：\n   - Jensen Huang作为英伟达的创始人兼CEO，其动向通常被视为公司战略和产品方向的重要指标。\n   - 第三季度的重要动向可能涉及公司产品线的调整、市场策略的变更或关键人才的变动。\n   - 这些动向可能对英伟达的产品需求、市场份额、竞争格局以及行业内的技术发展趋势产生直接或间接的影响。\n   - 对供应链上下游企业而言，英伟达的动向可能影响其订单量、原材料采购和产品研发方向。\n   - 对投资者而言，这些动向可能影响英伟达的股价表现，进而影响相关产业链的股票表现。",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 244,
+      "tok_out": 168,
+      "cost_usd": null
+    },
+    {
+      "kind": "B_news_real",
+      "label": "Meta reportedly calls its AI data centers ‘pilot models’ — its research tax credits jumped from $700M to $3.9B",
+      "model": "glm-4-flash",
+      "answer": "**1. 事件定性**：企业研发投入增加\n**2. 涉及板块/标的**：Meta（Facebook母公司）、人工智能行业\n**3. 客观影响链条**：\n- Meta将其AI数据中心称为“试点模型”，表明公司在人工智能领域加大了研发投入。\n- 研发税收抵免从7亿美元增至39亿美元，反映了公司对AI研发的重视程度。\n- 增加的研发投入可能对Meta的长期技术积累和竞争力产生积极影响。\n- 对人工智能行业可能产生正面影响，推动行业整体技术进步和创新。\n- 对相关供应链企业可能带来业务增长机会，尤其是那些为AI数据中心提供硬件和软件支持的企业。",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 274,
+      "tok_out": 148,
+      "cost_usd": null
+    },
+    {
+      "kind": "B_news_real",
+      "label": "Forget Waiting Three Months for SPY’s Dividend. Invesco’s High-Dividend Fund Pays Every Month",
+      "model": "glm-4-flash",
+      "answer": "**1. 事件定性**：金融产品特性变化\n**2. 涉及板块/标的**：投资管理、共同基金\n**3. 客观影响链条**：\n- Invesco推出高股息基金，每月支付股息，与传统的SPY（标普500指数跟踪基金）每三个月支付一次股息形成对比。\n- 这种产品特性的变化可能会吸引那些寻求更频繁现金回报的投资者。\n- 对于共同基金行业，这可能增加投资者对高股息基金的需求，从而可能增加相关基金的销售和市场份额。\n- 对于投资者而言，这提供了更多元化的投资选择，可能影响他们对不同基金产品的偏好和配置。",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 262,
+      "tok_out": 142,
+      "cost_usd": null
+    },
+    {
+      "kind": "B_news_injected",
+      "label": "英伟达季度营收超预期",
+      "model": "glm-4-flash",
+      "answer": "**1. 事件定性**：财报超预期\n**2. 涉及板块/标的**：英伟达（NVDA）\n**3. 客观影响链条**：\n- 英伟达季度营收同比大增，表明公司在报告期内实现了良好的业绩增长。\n- 营收增长可能源于市场需求增加、产品销售提升或新产品的推出。\n- 对于英伟达而言，营收增长可能反映了其在图形处理器（GPU）和数据中心解决方案领域的市场地位稳固。\n- 对于产业链上下游，英伟达的强劲营收可能带动相关供应商和合作伙伴的业务增长。\n- 对于投资者而言，英伟达的财报超预期可能提升市场对其未来业绩的信心，从而可能推动股价上涨。",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 259,
+      "tok_out": 153,
+      "cost_usd": null
+    },
+    {
+      "kind": "B_news_injected",
+      "label": "Nvidia beats estimates",
+      "model": "glm-4-flash",
+      "answer": "**1. 事件定性**：财报超预期\n**2. 涉及板块/标的**：Nvidia（NVDA）\n**3. 客观影响链条**：\n- Nvidia公布了强劲的季度收入，这表明公司的业绩超过了市场预期。\n- 该业绩表现可能反映了公司产品需求旺盛，市场对Nvidia的产品有较高的认可度。\n- 对于Nvidia的供应商和合作伙伴来说，这可能意味着订单增加，有助于提升相关企业的业绩。\n- 对于投资者而言，这一消息可能提升市场对Nvidia股票的信心，从而可能推动其股价上涨。",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 253,
+      "tok_out": 124,
+      "cost_usd": null
+    },
+    {
+      "kind": "B_news_injected",
+      "label": "公司公告拟回购股份",
+      "model": "glm-4-flash",
+      "answer": "**1. 事件定性**：公司回购股份\n**2. 涉及板块/标的**：未明确指出具体板块或股票名称\n**3. 客观影响链条**：公司董事会通过股份回购方案，可能表明公司对未来发展有信心，有助于提升投资者信心，短期可能对股价产生正面影响。股份回购将减少市场上流通的股份数量，从而可能提高每股收益。然而，长期影响取决于公司的财务状况、市场环境以及回购后的资金使用情况。",
+      "advice_hits": [],
+      "passed": true,
+      "tok_in": 248,
+      "tok_out": 107,
+      "cost_usd": null
+    },
+    {
+      "kind": "C_report_injected",
+      "label": "NVDA",
+      "model": "glm-4-flash",
+      "answer": "### 一、基础数据客观摘要\n\n1.1 行情与估值数据：\n- 当前价格：228.38 USD\n- 行业板块：Technology / Semiconductors\n- 市盈率 (PE TTM)：28.91\n- 总市值：5.51 万亿\n- 营收增速：105.90%\n- 52周高/低：236.54 / 164.27\n- 毛利率：0.74674004\n- ROE：1.17211\n\n1.2 第三方分析师评级人数分布与目标价历史区间：\n- 目标价：当前=$228.38, 均值=$327.70, 中位=$315.00, 最高=$515.00, 最低=$180.00\n- 评级人数分布：强烈推荐=10, 买入=48, 持有=2, 卖出=1\n\n### 二、产业链上下游客观描述\n\n2.1 已知的上下游合作方/客户群体：\n- 数据缺失，无法提供具体产业链细节\n\n### 三、主营业务客观描述\n\n3.1 主营业务与产品线：\n- 数据缺失，无法提供具体产品线信息\n\n3.2 同行业上市公司列表：\n- 数据缺失，无法提供可验证的同行对比\n\n### 四、缠论技术面数据摘要\n\n4.1 顶底分型、中枢区间、MACD背驰结果：\n- 数据缺失，无法提供缠论技术面数据\n\n### 五、财务数据客观摘要\n\n5.1 财务核心指标：\n- 营收增速：105.90%\n- 毛利率：0.74674004\n- ROE：1.17211\n\n5.2 第三方分析师EPS/营收增速预测：\n- 数据缺失，无法提供第三方分析师预测\n\n### 六、事件与关注变量\n\n6.1 已知的真实公司专属事件：\n- 数据缺失，无法提供具体事件信息\n\n6.2 新闻事件性质客观分类：\n- Yahoo Finance Video：中性事件描述\n- Moneywise：中性事件描述\n- 24/7 Wall St.：中性事件描述\n- The Wall Street Journal：中性事件描述\n- Barrons.com：中性事件描述\n- 外部快讯：正面事件描述",
+      "advice_hits": [
+        "目标价：当前=$2"
+      ],
+      "passed": false,
+      "tok_in": 1397,
+      "tok_out": 490,
+      "cost_usd": null
+    }
+  ]
+}

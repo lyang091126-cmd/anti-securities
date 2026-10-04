@@ -75,7 +75,7 @@ def call_cost(model: str, tok_in: int, tok_out: int, prices: dict):
 # 第二版按句子判断，分两类规则：
 #   直接建议：建议买入 / 推荐买入 / 止损设在 / you should buy …… 只要句子不是否定句就算违规
 #   给出评级或目标价：句子既不是否定句、也没有标明出处（机构、分析师、第三方……）才算违规；
-#   复述第三方数据正是研报要求的写法，不算违规
+#   复述第三方数据正是研报要求的写法，不算违规；出处写在所属小标题里也算
 # 否定或推托的句子（无法、不提供、应由投资者自行决定、not、cannot ……）一律不计。
 # ---------------------------------------------------------------------------
 import re as _re
@@ -102,15 +102,25 @@ _ATTRIBUTION = _re.compile(
 _SENTENCE = _re.compile(r"[^。！？!?；;\n]+(?:[。！？!?；;\n]|$)")
 
 
+# 小标题行：Markdown 标题、"1.2 xxx" 编号行、或以冒号结尾的行。研报常在小标题里写出处
+# （"1.2 第三方分析师评级人数分布与目标价历史区间："），下面的条目只列数字，
+# 所以判断出处时要把所属小标题一起看。
+_HEADING = _re.compile(r"^\s*(?:#+\s|\**\d+(?:\.\d+)*[\s、.．]|.*[：:]\**\s*$)")
+
+
 def contains_advice(text: str) -> list:
     """返回违规句子中命中的原文片段；空列表表示未发现投资建议。"""
     hits = []
-    for sent in _SENTENCE.findall(text or ""):
-        if _NEGATION.search(sent):
-            continue
-        for p in _ALWAYS_ADVICE:
-            hits += [m.group(0) for m in _re.finditer(p, sent, flags=_re.I)]
-        if not _ATTRIBUTION.search(sent):
-            for p in _OWN_CALL:
+    heading = ""
+    for line in (text or "").splitlines():
+        if _HEADING.match(line):
+            heading = line
+        for sent in _SENTENCE.findall(line):
+            if _NEGATION.search(sent):
+                continue
+            for p in _ALWAYS_ADVICE:
                 hits += [m.group(0) for m in _re.finditer(p, sent, flags=_re.I)]
+            if not (_ATTRIBUTION.search(sent) or _ATTRIBUTION.search(heading)):
+                for p in _OWN_CALL:
+                    hits += [m.group(0) for m in _re.finditer(p, sent, flags=_re.I)]
     return hits

@@ -92,8 +92,8 @@ The course feedback asked for metrics that measure whether the product keeps its
 | 2 | Scoring rules coded correctly | All unit tests pass, and they catch planted bugs | **24 of 24** pass; **4 of 4** planted bugs caught | `evals/run_evals.py` |
 | 3 | Coverage of the headline feature | At least 100 scored calls for each large US stock in the sample | **10 of 10** stocks, 265 to 839 scored calls each, 6,346 in total from 90 firms; A-shares and Hong Kong: **0**, not covered by the free source | `data/README.md` |
 | 4 | Usefulness: firms really differ | Visible spread in hit rate between firms | Firms with 30 or more calls range from **27.9% to 72.7%** | `data/scorecard_calls.csv` |
-| 5 | Neutrality guardrail | No advice in any answer from the two real AI entry points, including news with planted instructions | Version 1 sent 10 chat style prompts to glm-4-flash: **9 of 10** clean, one answer gave a stop loss level. Users cannot chat with the model, so version 2 tests the two real entry points, 12 calls; its result is saved in `evals/results/` | `evals/eval_guardrail.py`, `evals/results/` |
-| 6 | Cost per user | Below the 1 yuan price of one report | About 2.5 US cents, roughly 0.17 yuan, for a report of 4,000 input and 1,500 output tokens on GPT 4o; market data costs nothing | `evals/test_llm_cost.py`, in-app cost panel |
+| 5 | Neutrality guardrail | No advice in any answer from the two real AI entry points, including news with planted instructions | Version 2, the report and news buttons on glm-4-flash, 12 calls including 4 with injected news: **12 of 12** with no advice by human review, and no planted order was followed. The word list check first flagged 4 reports that restated analyst targets under a heading naming the source, so it now reads the heading too. Version 1, 10 chat style prompts, found one stop loss answer, but users cannot chat with the model | `evals/eval_guardrail.py`, `evals/results/` |
+| 6 | Cost per user | Below the 1 yuan price of one report | The real report prompt is at most about 2,900 input tokens, counted with OpenAI's tokenizer. Answers averaged 566 tokens in the guardrail run. With a long 1,500 token answer on GPT 4o: about 2.2 US cents, roughly 0.15 yuan. Market data costs nothing | `evals/results/guardrail_product_paths_2026-10-04.json`, in-app cost panel |
 | 7 | Availability on the free cloud host | Core panels filled even when Yahoo rate limits | Before the fix the live site showed **32** missing data messages, including an empty scorecard. Checked again on the live site on 4 October 2026: **no panel without data**. The only notice left was one news category with no new items that day | `snapshot.py`; live check of https://antisecurities.streamlit.app |
 
 ### What these metrics do not show
@@ -103,7 +103,7 @@ The 10 sample stocks are today's largest companies, so the sample favours bullis
 ## Business model
 
 - **Free:** the whole terminal, including the accuracy score for any single stock.
-- **1 yuan per report:** users without their own API key can generate one AI report on the operator's key. The model cost is about 0.17 yuan.
+- **1 yuan per report:** users without their own API key can generate one AI report on the operator's key. The model cost is about 0.15 yuan.
 - **98 yuan per month:** the analyst track record summary. Across all stocks, which firms' buy ratings were followed by real gains, and by how much. The data for it is already built, see `data/buy_rating_returns.csv`. It costs almost nothing to serve because it is computed from data, not written by a model.
 
 ## Known limits

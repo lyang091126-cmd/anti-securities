@@ -117,7 +117,7 @@ cost per call           = input tokens × input price + output tokens × output 
 cost per user per month = sessions per month × sum of cost per call in one session
 ```
 
-Prices are read live from the public OpenRouter price list. On 1 October 2026 GPT 4o mini cost 0.15 and 0.60 US dollars per million input and output tokens, and GPT 4o cost 2.50 and 10.00. A report of about 4,000 input and 1,500 output tokens on GPT 4o costs about 2.5 US cents. If a model's price cannot be found, the panel shows the tokens and says the price is not verified.
+Prices are read live from the public OpenRouter price list. On 1 October 2026 GPT 4o mini cost 0.15 and 0.60 US dollars per million input and output tokens, and GPT 4o cost 2.50 and 10.00. A real report prompt is at most about 2,900 input tokens, and with a long 1,500 token answer on GPT 4o one report costs about 2.2 US cents. If a model's price cannot be found, the panel shows the tokens and says the price is not verified.
 
 ## LLM guardrail
 
